@@ -6,7 +6,7 @@ version = "0.13.0"
 dependencies = [
  "cpp_demangle",
  "fallible-iterator",
- "gimli 0.22.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gimli",
  "object",
  "rustc-demangle",
  "smallvec",
@@ -119,7 +119,9 @@ dependencies = [
 
 [[package]]
 name = "cplus_demangle"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a8535e806ca9c0be6e22afbeac9872995e2742586f7a256c195288f3f20bde6"
 dependencies = [
  "cc",
  "libc",
@@ -207,6 +209,13 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "xi-unicode",
+]
+
+[[package]]
+name = "cursive_table_view"
+version = "0.12.0"
+dependencies = [
+ "cursive_core",
 ]
 
 [[package]]
@@ -347,15 +356,6 @@ dependencies = [
 [[package]]
 name = "gimli"
 version = "0.22.0"
-dependencies = [
- "fallible-iterator",
- "indexmap",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "gimli"
-version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aaf91faf136cb47367fa430cd46e37a788775e7fa104f8b4bcb3861dc389b724"
 dependencies = [
@@ -368,15 +368,6 @@ name = "glob"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
-
-[[package]]
-name = "hashbrown"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91b62f79061a0bc2e046024cb7ba44b08419ed238ecbd9adbd787434b9e8c25"
-dependencies = [
- "autocfg",
-]
 
 [[package]]
 name = "hermit-abi"
@@ -401,16 +392,6 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
-name = "indexmap"
-version = "1.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86b45e59b16c76b11bf9738fd5d38879d3bd28ad292d7b313608becb17ae2df9"
-dependencies = [
- "autocfg",
- "hashbrown",
-]
 
 [[package]]
 name = "lazy_static"
@@ -540,9 +521,9 @@ dependencies = [
 
 [[package]]
 name = "object"
-version = "0.21.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37fd5004feb2ce328a52b0b3d01dbf4ffff72583493900ed15f22d4111c51693"
+checksum = "1ab52be62400ca80aa00285d25253d7f7c437b7375c4de678f5405d3afe82ca5"
 dependencies = [
  "flate2",
  "wasmparser",
@@ -730,9 +711,9 @@ dependencies = [
  "addr2line",
  "cplus_demangle",
  "cursive",
+ "cursive_table_view",
  "env_logger",
  "fuzzy-matcher",
- "gimli 0.22.0",
  "log",
  "memmap",
  "object",

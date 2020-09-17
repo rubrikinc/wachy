@@ -1,5 +1,8 @@
 mod controller;
+mod error;
 mod program;
+mod tracer;
+mod views;
 
 use std::env;
 
@@ -16,8 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Ensure mmap lifetime is greater than Program
     let mmap = program::mmap_file(&file_path)?;
-    let program = program::Program::new(&mmap)?;
-    let controller = controller::Controller::new(program, &function_name);
+    let program = program::Program::new(file_path, &mmap)?;
+    let controller = controller::Controller::new(program, &function_name)?;
 
     Ok(())
 }

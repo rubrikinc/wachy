@@ -1,5 +1,5 @@
+use crate::error::Error;
 use addr2line::Location;
-use core::fmt;
 use object::Object;
 use object::ObjectSection;
 use std::collections::HashMap;
@@ -9,30 +9,14 @@ use std::collections::HashMap;
 pub struct FunctionName<'a>(&'a str);
 
 pub struct Program<'a> {
+    /// Only when printing error messages
+    pub file_path: String,
     file: object::read::File<'a>,
     name_to_symbol: HashMap<FunctionName<'a>, SymbolInfo<'a>>,
     context: addr2line::ObjectContext,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
     dynamic_symbols_range: (u64, u64),
-}
-
-#[derive(Debug)]
-pub struct Error(String);
-
-impl fmt::Display for Error {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<String> for Error {
-    fn from(err: String) -> Error {
-        Error(err)
-    }
 }
 
 #[derive(Debug)]
@@ -65,10 +49,10 @@ pub fn mmap_file(file_path: &str) -> Result<memmap::Mmap, Error> {
 }
 
 impl<'a> Program<'a> {
-    pub fn new(mmap: &'a memmap::Mmap) -> Result<Self, Error> {
+    pub fn new(file_path: String, mmap: &'a memmap::Mmap) -> Result<Self, Error> {
         let file = match object::File::parse(&*mmap) {
             Ok(file) => file,
-            Err(err) => return Err(format!("Failed to parse file: {}", err).into()),
+            Err(err) => return Err(format!("Failed to parse file {}: {}", file_path, err).into()),
         };
 
         // TODO fixup unwraps
@@ -107,6 +91,7 @@ impl<'a> Program<'a> {
         let context = addr2line::Context::new(&file).unwrap();
 
         Ok(Program {
+            file_path,
             file,
             name_to_symbol,
             context,
