@@ -4,15 +4,16 @@ use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
 use std::io::BufRead;
+use std::sync::{Arc, Mutex};
 
-pub struct Controller<'a> {
-    program: Program<'a>,
-    tracer: Tracer<'a>,
+pub struct Controller {
+    program: Program,
+    tracer: Arc<Mutex<Tracer>>,
 }
 
-impl<'a> Controller<'a> {
-    pub fn start(program: Program<'a>, function_name: &str) -> Result<(), Error> {
-        let tracer = Tracer::new(Box::new(Controller::handle_trace_data))?;
+impl Controller {
+    pub fn run(program: Program, function_name: &str) -> Result<(), Error> {
+        let tracer = Tracer::new()?;
 
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
@@ -33,8 +34,6 @@ impl<'a> Controller<'a> {
             .map(|l| l.unwrap())
             .collect();
 
-        let controller = Controller { program, tracer };
-
         // The line mapping starts inside function body, subtract one to try to
         // show header.
         let start_line = source_line.saturating_sub(1);
@@ -46,14 +45,28 @@ impl<'a> Controller<'a> {
                 .full_screen(),
         );
 
+        let controller = Arc::new(Mutex::new(Controller { program, tracer }));
+        let controller_ref = Arc::downgrade(&controller);
+        controller
+            .lock()
+            .unwrap()
+            .tracer
+            .lock()
+            .unwrap()
+            .set_callback(Box::new(move |data| {
+                // If tracer is alive then controller must be as well, so unwrap is safe
+                controller_ref
+                    .upgrade()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .handle_trace_data(data);
+            }));
+
         siv.set_user_data(controller);
         siv.run();
         Ok(())
     }
 
-    pub fn run(&mut self) {
-        self.siv.run();
-    }
-
-    fn handle_trace_data(data: TraceData) {}
+    fn handle_trace_data(&mut self, data: TraceData) {}
 }

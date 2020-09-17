@@ -18,10 +18,8 @@ fn main() {
         let file_path = args.next().unwrap();
         let function_name = args.next().unwrap();
 
-        // Ensure mmap lifetime is greater than Program
-        let mmap = program::mmap_file(&file_path)?;
-        let program = program::Program::new(file_path, &mmap)?;
-        // controller::Controller::start(program, &function_name)?;
+        let program = program::Program::new(file_path)?;
+        controller::Controller::run(program, &function_name)?;
         Ok(())
     };
 

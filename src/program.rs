@@ -6,13 +6,13 @@ use std::collections::HashMap;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 /// Name corresponding to a function symbol that exists in the program
-pub struct FunctionName<'a>(&'a str);
+pub struct FunctionName(&'static str);
 
-pub struct Program<'a> {
-    /// Only when printing error messages
+pub struct Program {
+    /// Only used when printing error messages
     pub file_path: String,
-    file: object::read::File<'a>,
-    name_to_symbol: HashMap<FunctionName<'a>, SymbolInfo<'a>>,
+    file: object::read::File<'static>,
+    name_to_symbol: HashMap<FunctionName, SymbolInfo>,
     context: addr2line::ObjectContext,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
@@ -20,14 +20,14 @@ pub struct Program<'a> {
 }
 
 #[derive(Debug)]
-struct SymbolInfo<'a> {
-    name: FunctionName<'a>,
+struct SymbolInfo {
+    name: FunctionName,
     demangled_name: Option<String>,
     address: u64,
     size: u64,
 }
 
-impl SymbolInfo<'_> {
+impl SymbolInfo {
     fn display_name(&self) -> &str {
         match &self.demangled_name {
             Some(dn) => &dn,
@@ -36,20 +36,22 @@ impl SymbolInfo<'_> {
     }
 }
 
-pub fn mmap_file(file_path: &str) -> Result<memmap::Mmap, Error> {
-    let file = match std::fs::File::open(&file_path) {
-        Ok(file) => file,
-        Err(err) => return Err(format!("Failed to open file {}: {}", file_path, err).into()),
-    };
-    let mmap = match unsafe { memmap::Mmap::map(&file) } {
-        Ok(mmap) => mmap,
-        Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
-    };
-    Ok(mmap)
-}
+impl Program {
+    pub fn new(file_path: String) -> Result<Self, Error> {
+        let file = match std::fs::File::open(&file_path) {
+            Ok(file) => file,
+            Err(err) => return Err(format!("Failed to open file {}: {}", file_path, err).into()),
+        };
+        let mmap = match unsafe { memmap::Mmap::map(&file) } {
+            Ok(mmap) => mmap,
+            Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
+        };
+        // Yeah yeah this is a terrible thing to do. I couldn't find any way at
+        // all to propagate appropriate lifetimes into cursive (if you know a
+        // way let me know), so it's either making this mmap static or some
+        // other struct, and doing it here simplifies LOTS of annotations.
+        let mmap = Box::leak(Box::new(mmap));
 
-impl<'a> Program<'a> {
-    pub fn new(file_path: String, mmap: &'a memmap::Mmap) -> Result<Self, Error> {
         let file = match object::File::parse(&*mmap) {
             Ok(file) => file,
             Err(err) => return Err(format!("Failed to parse file {}: {}", file_path, err).into()),
