@@ -1,18 +1,18 @@
 use crate::error::Error;
 use crate::program::Program;
-use crate::tracer::Tracer;
+use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
 use std::io::BufRead;
 
 pub struct Controller<'a> {
     program: Program<'a>,
-    tracer: Tracer,
+    tracer: Tracer<'a>,
 }
 
 impl<'a> Controller<'a> {
-    pub fn new(program: Program<'a>, function_name: &str) -> Result<Controller<'a>, Error> {
-        let tracer = Tracer::new()?;
+    pub fn start(program: Program<'a>, function_name: &str) -> Result<(), Error> {
+        let tracer = Tracer::new(Box::new(Controller::handle_trace_data))?;
 
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
@@ -33,6 +33,8 @@ impl<'a> Controller<'a> {
             .map(|l| l.unwrap())
             .collect();
 
+        let controller = Controller { program, tracer };
+
         // The line mapping starts inside function body, subtract one to try to
         // show header.
         let start_line = source_line.saturating_sub(1);
@@ -43,7 +45,15 @@ impl<'a> Controller<'a> {
                 .title(format!("wachy | {}", program.file_path))
                 .full_screen(),
         );
+
+        siv.set_user_data(controller);
         siv.run();
-        Ok(Controller { program, tracer })
+        Ok(())
     }
+
+    pub fn run(&mut self) {
+        self.siv.run();
+    }
+
+    fn handle_trace_data(data: TraceData) {}
 }
