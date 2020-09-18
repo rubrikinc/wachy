@@ -11,8 +11,10 @@ addr2line = { path = "../addr2line" }
 cplus_demangle = "0.1.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }
-env_logger = "0.7.1"
 fuzzy-matcher = "0.3.5"
+gimli = "0.22"
+libc = "0.2.77"
 log = "0.4.11"
 memmap = "0.7.0"
 object = "0.20"
+simple-logging = "2.0.2"

@@ -3,30 +3,33 @@ use crate::program::Program;
 use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
+use cursive::Cursive;
 use std::io::BufRead;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 
 pub struct Controller {
     program: Program,
-    tracer: Arc<Mutex<Tracer>>,
+    tracer: Tracer,
 }
 
 impl Controller {
     pub fn run(program: Program, function_name: &str) -> Result<(), Error> {
-        let tracer = Tracer::new()?;
+        let (tx, rx) = mpsc::channel();
+        let tracer = Tracer::new(program.file_path.clone(), tx)?;
 
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
         let function = matches.into_iter().next().unwrap();
         let location = program.get_location(function);
         let source_file = location.file.ok_or(format!("Failed to get source file name corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
-        let source_line = location.line.ok_or(format!("Failed to get source file lin number corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
+        let source_line = location.line.ok_or(format!("Failed to get source file line number corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
         log::debug!(
             "Function {} is at {}:{}",
             function_name,
             source_file,
             source_line
         );
+        tracer.reset_traced_function(source_line, function);
 
         let file = std::fs::File::open(source_file).unwrap();
         let source_code: Vec<String> = std::io::BufReader::new(file)
@@ -34,10 +37,7 @@ impl Controller {
             .map(|l| l.unwrap())
             .collect();
 
-        // The line mapping starts inside function body, subtract one to try to
-        // show header.
-        let start_line = source_line.saturating_sub(1);
-        let source_view = views::new_source_view(source_code, start_line);
+        let source_view = views::new_source_view(source_code, source_line);
         let mut siv = cursive::default();
         siv.add_layer(
             cursive::views::Dialog::around(source_view.with_name("source_view"))
@@ -45,28 +45,29 @@ impl Controller {
                 .full_screen(),
         );
 
-        let controller = Arc::new(Mutex::new(Controller { program, tracer }));
-        let controller_ref = Arc::downgrade(&controller);
-        controller
-            .lock()
-            .unwrap()
-            .tracer
-            .lock()
-            .unwrap()
-            .set_callback(Box::new(move |data| {
-                // If tracer is alive then controller must be as well, so unwrap is safe
-                controller_ref
-                    .upgrade()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .handle_trace_data(data);
-            }));
-
+        let controller = Controller { program, tracer };
         siv.set_user_data(controller);
-        siv.run();
+
+        siv.refresh();
+        while siv.is_running() {
+            siv.step();
+            match rx.try_recv() {
+                Ok(data) => Controller::handle_trace_data(&mut siv, data)?,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(format!("Unexpected error: trace channel disconnected").into())
+                }
+                Err(mpsc::TryRecvError::Empty) => (),
+            }
+        }
         Ok(())
     }
 
-    fn handle_trace_data(&mut self, data: TraceData) {}
+    fn handle_trace_data(siv: &mut Cursive, data: TraceData) -> Result<(), Error> {
+        match data {
+            TraceData::FatalError(message) => {
+                siv.quit();
+                Err(message.into())
+            }
+        }
+    }
 }

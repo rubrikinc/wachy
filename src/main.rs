@@ -6,8 +6,22 @@ mod views;
 
 use std::env;
 
+fn setup_logging() {
+    for var in env::var("RUST_LOG") {
+        let filter = match &var[..] {
+            "error" => Some(log::LevelFilter::Error),
+            "warn" => Some(log::LevelFilter::Warn),
+            "info" => Some(log::LevelFilter::Info),
+            "debug" => Some(log::LevelFilter::Debug),
+            "trace" => Some(log::LevelFilter::Trace),
+            _ => None,
+        };
+        filter.map(|f| simple_logging::log_to_file("wachy.log", f));
+    }
+}
+
 fn main() {
-    env_logger::init();
+    setup_logging();
     let run = || -> Result<(), error::Error> {
         let arg_len = env::args().len();
         if arg_len != 3 {

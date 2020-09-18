@@ -4,7 +4,7 @@ mod source_view {
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub enum Column {
         Duration,
-        Count,
+        Frequency,
         LineNumber,
         Line,
     }
@@ -12,7 +12,7 @@ mod source_view {
     #[derive(Clone, Debug)]
     pub struct Item {
         pub duration: Option<std::time::Duration>,
-        pub count: Option<i64>,
+        pub frequency: Option<f32>,
         pub line_number: u32,
         pub line: String,
     }
@@ -24,7 +24,7 @@ mod source_view {
                     Some(duration) => format!("{:?}", duration),
                     None => String::new(),
                 },
-                Column::Count => self.count.map_or(String::new(), |f| f.to_string()),
+                Column::Frequency => self.frequency.map_or(String::new(), |f| f.to_string()),
                 Column::LineNumber => self.line_number.to_string(),
                 Column::Line => self.line.clone(),
             }
@@ -46,7 +46,7 @@ pub fn new_source_view(
     let line_num_width = (source.len() as f32).log10().ceil() as usize + 1;
     let mut table = cursive_table_view::TableView::<Item, Column>::new()
         .column(Column::Duration, "Duration", |c| c.width(8))
-        .column(Column::Count, "Count", |c| c.width(8))
+        .column(Column::Frequency, "Frequency", |c| c.width(8))
         .column(Column::LineNumber, "", |c| {
             c.width(line_num_width).align(cursive::align::HAlign::Right)
         })
@@ -57,7 +57,7 @@ pub fn new_source_view(
         .enumerate()
         .map(|(i, line)| Item {
             duration: None,
-            count: None,
+            frequency: None,
             line_number: i as u32 + 1,
             line,
         })
