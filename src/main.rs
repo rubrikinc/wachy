@@ -7,7 +7,7 @@ mod views;
 use std::env;
 
 fn setup_logging() {
-    for var in env::var("RUST_LOG") {
+    if let Ok(var) = env::var("RUST_LOG") {
         let filter = match &var[..] {
             "error" => Some(log::LevelFilter::Error),
             "warn" => Some(log::LevelFilter::Warn),

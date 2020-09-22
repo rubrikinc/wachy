@@ -68,6 +68,18 @@ impl Controller {
                 siv.quit();
                 Err(message.into())
             }
+            TraceData::Data(data) => {
+                siv.call_on_name("source_view", |table: &mut views::SourceView| {
+                    let items = table.borrow_items_mut();
+                    for (line, info) in data.traces {
+                        // TODO check for err
+                        let item = items.get_mut(line as usize - 1).unwrap();
+                        item.latency = Some(info.duration / info.count as u32);
+                        item.frequency = Some(info.count as f32 / data.time.as_secs_f32());
+                    }
+                });
+                Ok(())
+            }
         }
     }
 }
