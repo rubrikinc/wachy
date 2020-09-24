@@ -8,6 +8,8 @@ edition = "2018"
 
 [dependencies]
 addr2line = { path = "../addr2line" }
+backtrace = "0.3.50"
+capstone = "0.7.0"
 cplus_demangle = "0.1.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }

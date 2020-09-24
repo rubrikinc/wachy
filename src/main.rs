@@ -5,6 +5,8 @@ mod tracer;
 mod views;
 
 use std::env;
+use std::fmt::Write;
+use std::panic::PanicInfo;
 
 fn setup_logging() {
     if let Ok(var) = env::var("RUST_LOG") {
@@ -36,6 +38,25 @@ fn main() {
         controller::Controller::run(program, &function_name)?;
         Ok(())
     };
+
+    std::panic::set_hook(Box::new(|info: &PanicInfo| {
+        // TODO write to separate log file, print after dropping cursive
+        let mut msg = String::new();
+        let _ = writeln!(msg, "Panic! [v{}].", env!("CARGO_PKG_VERSION"));
+        if let Some(payload) = info.payload().downcast_ref::<&str>() {
+            let _ = writeln!(msg, "Cause: {}", payload);
+        }
+
+        if let Some(location) = info.location() {
+            let _ = writeln!(msg, "Location: {}.", location);
+        }
+
+        let _ = writeln!(msg);
+        let _ = writeln!(msg, "{:#?}", backtrace::Backtrace::new());
+
+        log::error!("{}", msg);
+        eprintln!("{}", msg);
+    }));
 
     let ret = run();
     if ret.is_err() {

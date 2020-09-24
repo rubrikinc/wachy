@@ -1,11 +1,11 @@
 use crate::error::Error;
 use crate::program::Program;
-use crate::tracer::{TraceData, Tracer};
+use crate::tracer::{TraceData, TraceStack, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
 use std::io::BufRead;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 pub struct Controller {
     program: Program,
@@ -14,22 +14,26 @@ pub struct Controller {
 
 impl Controller {
     pub fn run(program: Program, function_name: &str) -> Result<(), Error> {
-        let (tx, rx) = mpsc::channel();
-        let tracer = Tracer::new(program.file_path.clone(), tx)?;
-
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
         let function = matches.into_iter().next().unwrap();
         let location = program.get_location(function);
         let source_file = location.file.ok_or(format!("Failed to get source file name corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
         let source_line = location.line.ok_or(format!("Failed to get source file line number corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
-        log::debug!(
+        log::info!(
             "Function {} is at {}:{}",
             function_name,
             source_file,
             source_line
         );
-        tracer.reset_traced_function(source_line, function);
+
+        let trace_stack = Arc::new(TraceStack::new(
+            program.file_path.clone(),
+            source_line,
+            function,
+        ));
+        let (tx, rx) = mpsc::channel();
+        let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
 
         let file = std::fs::File::open(source_file).unwrap();
         let source_code: Vec<String> = std::io::BufReader::new(file)
@@ -74,7 +78,9 @@ impl Controller {
                     for (line, info) in data.traces {
                         // TODO check for err
                         let item = items.get_mut(line as usize - 1).unwrap();
-                        item.latency = Some(info.duration / info.count as u32);
+                        if info.count != 0 {
+                            item.latency = Some(info.duration / info.count as u32);
+                        }
                         item.frequency = Some(info.count as f32 / data.time.as_secs_f32());
                     }
                 });

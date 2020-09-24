@@ -3,7 +3,8 @@ use crate::program::FunctionName;
 use std::collections::HashMap;
 use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::AtomicU64;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -14,8 +15,8 @@ pub struct Tracer {
 }
 
 enum TraceCommand {
-    /// The number is an arbitrary tag that will be passed back in TraceData
-    ResetTraceFunction(u32, FunctionName),
+    /// TraceStack has changed, rerun the tracer from scratch
+    RerunTracer,
     Exit,
 }
 
@@ -42,7 +43,10 @@ pub struct TraceCumulative {
 impl Tracer {
     /// tx is used to transmit trace data in response to the requests given to
     /// this class.
-    pub fn new(program_path: String, data_tx: mpsc::Sender<TraceData>) -> Result<Tracer, Error> {
+    pub fn new(
+        trace_stack: Arc<TraceStack>,
+        data_tx: mpsc::Sender<TraceData>,
+    ) -> Result<Tracer, Error> {
         match Command::new("bpftrace").arg("--version").output() {
             Ok(output) => log::trace!("bpftrace version: {:?}", output),
             Err(err) => {
@@ -57,7 +61,7 @@ impl Tracer {
 
         let (command_tx, command_rx) = mpsc::channel();
         let command_thread = thread::spawn(move || {
-            TraceCommandHandler::new(program_path, data_tx).run(command_rx);
+            TraceCommandHandler::new(trace_stack, data_tx).run(command_rx);
         });
         let tracer = Tracer {
             tx: command_tx,
@@ -67,14 +71,13 @@ impl Tracer {
         Ok(tracer)
     }
 
-    /// Set function to trace (results of which will be sent to the callback).
-    /// This is non-blocking - actual tracing updates will happen in the
-    /// background. However, the callback is guaranteed to only be called after
-    /// taking this new update into account.
-    pub fn reset_traced_function(&self, tag: u32, function: crate::program::FunctionName) {
-        self.tx
-            .send(TraceCommand::ResetTraceFunction(tag, function))
-            .unwrap()
+    /// Rerun tracer after modifying TraceStack (results of which will be sent
+    /// to the callback). This is non-blocking - actual tracing updates will
+    /// happen in the background. However, the callback is guaranteed to only be
+    /// called if TraceStack::counter matches what it was when the tracer was
+    /// started.
+    pub fn rerun_tracer(&self) {
+        self.tx.send(TraceCommand::RerunTracer).unwrap()
     }
 }
 
@@ -90,30 +93,27 @@ impl Drop for Tracer {
 /// Polls and reacts to issued commands
 struct TraceCommandHandler {
     data_tx: mpsc::Sender<TraceData>,
-    trace_stack: TraceStack,
+    trace_stack: Arc<TraceStack>,
     /// Used to track bpftrace pid so we can kill it when needed
     program_id: Option<u32>,
     output_processor: Option<thread::JoinHandle<()>>,
 }
 
 impl TraceCommandHandler {
-    fn new(program_path: String, data_tx: mpsc::Sender<TraceData>) -> TraceCommandHandler {
+    fn new(trace_stack: Arc<TraceStack>, data_tx: mpsc::Sender<TraceData>) -> TraceCommandHandler {
         TraceCommandHandler {
             data_tx,
-            trace_stack: TraceStack::new(program_path),
+            trace_stack,
             program_id: None,
             output_processor: None,
         }
     }
 
     fn run(mut self, command_rx: mpsc::Receiver<TraceCommand>) {
+        self.rerun_bpftrace();
         for cmd in command_rx {
             match cmd {
-                TraceCommand::ResetTraceFunction(tag, function) => {
-                    self.trace_stack.clear();
-                    self.trace_stack.push(tag, function);
-                    self.rerun_bpftrace();
-                }
+                TraceCommand::RerunTracer => self.rerun_bpftrace(),
                 TraceCommand::Exit => return,
             }
         }
@@ -157,9 +157,10 @@ impl TraceCommandHandler {
                     }
                     Ok(parsed) => parsed,
                 };
-                tx.send(TraceData::Data(parsed));
+                tx.send(TraceData::Data(parsed)).unwrap();
             }
             let status = program.wait().unwrap();
+            log::trace!("Done, status: {}!", status);
             let mut stderr = String::new();
             match program.stderr.unwrap().read_to_string(&mut stderr) {
                 Err(err) => log::error!("Failed to read bpftrace stderr: {:?}", err),
@@ -180,9 +181,10 @@ impl TraceCommandHandler {
 
 /// Manages the stack of functions being traced and helps generate appropriate
 /// bpftrace programs.
-struct TraceStack {
+pub struct TraceStack {
+    counter: AtomicU64,
     program_path: String,
-    frames: Vec<(u32, FunctionName)>,
+    frames: Mutex<Vec<(u32, FunctionName)>>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -193,19 +195,13 @@ struct TraceOutput {
 }
 
 impl TraceStack {
-    fn new(program_path: String) -> TraceStack {
+    pub fn new(program_path: String, tag: u32, function: FunctionName) -> TraceStack {
+        let frames = vec![(tag, function)];
         TraceStack {
+            counter: AtomicU64::new(0),
             program_path,
-            frames: Vec::new(),
+            frames: Mutex::new(frames),
         }
-    }
-
-    fn clear(&mut self) {
-        self.frames.clear();
-    }
-
-    fn push(&mut self, tag: u32, function: FunctionName) {
-        self.frames.push((tag, function));
     }
 
     /// Panics if called with empty stack
@@ -214,11 +210,12 @@ impl TraceStack {
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
         // We use tag number in variable naming to identify the results.
         // TODO add tests
+        let frames = self.frames.lock().unwrap();
         let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
-        for (i, frame) in self.frames.iter().enumerate() {
-            if i != self.frames.len() - 1 {}
+        for (i, frame) in frames.iter().enumerate() {
+            if i != frames.len() - 1 {}
         }
-        let (tag, function) = self.frames.last().unwrap();
+        let (tag, function) = frames.last().unwrap();
         parts.push(format!(
             "uprobe:{}:{} {{ @start{}[tid] = nsecs; }}",
             self.program_path, function.0, tag
