@@ -1,9 +1,11 @@
 use crate::error::Error;
 use crate::program::Program;
-use crate::tracer::{TraceData, TraceStack, Tracer};
+use crate::trace_structs::{FrameInfo, TraceStack};
+use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
 
@@ -30,7 +32,7 @@ impl Controller {
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
             source_line,
-            function,
+            FrameInfo::new(function, HashMap::new()),
         ));
         let (tx, rx) = mpsc::channel();
         let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;

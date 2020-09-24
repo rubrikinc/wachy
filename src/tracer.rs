@@ -1,12 +1,9 @@
 use crate::error::Error;
-use crate::program::FunctionName;
-use std::collections::HashMap;
+use crate::trace_structs::{TraceInfo, TraceStack};
 use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
-use std::sync::atomic::AtomicU64;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
 
 /// Encapsulates a scheme for tracing a particular program and its functions
 pub struct Tracer {
@@ -24,20 +21,6 @@ pub enum TraceData {
     /// Includes error message. The program should quit on receiving this.
     FatalError(String),
     Data(TraceInfo),
-}
-
-pub struct TraceInfo {
-    /// Time for which current trace has been running
-    pub time: Duration,
-    /// Map from tag to cumulative values
-    pub traces: HashMap<u32, TraceCumulative>,
-}
-
-pub struct TraceCumulative {
-    /// Cumulative time spent
-    pub duration: Duration,
-    /// Cumulative count
-    pub count: u64,
 }
 
 impl Tracer {
@@ -176,75 +159,5 @@ impl TraceCommandHandler {
                 log::info!("bpftrace stderr:\n{}", stderr);
             }
         }));
-    }
-}
-
-/// Manages the stack of functions being traced and helps generate appropriate
-/// bpftrace programs.
-pub struct TraceStack {
-    counter: AtomicU64,
-    program_path: String,
-    frames: Mutex<Vec<(u32, FunctionName)>>,
-}
-
-#[derive(serde::Deserialize, Debug)]
-struct TraceOutput {
-    time: u64,
-    /// Map from (stringified) tag to (duration, count)
-    traces: HashMap<String, (u64, u64)>,
-}
-
-impl TraceStack {
-    pub fn new(program_path: String, tag: u32, function: FunctionName) -> TraceStack {
-        let frames = vec![(tag, function)];
-        TraceStack {
-            counter: AtomicU64::new(0),
-            program_path,
-            frames: Mutex::new(frames),
-        }
-    }
-
-    /// Panics if called with empty stack
-    fn get_bpftrace_expr(&self) -> String {
-        // Example:
-        // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
-        // We use tag number in variable naming to identify the results.
-        // TODO add tests
-        let frames = self.frames.lock().unwrap();
-        let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
-        for (i, frame) in frames.iter().enumerate() {
-            if i != frames.len() - 1 {}
-        }
-        let (tag, function) = frames.last().unwrap();
-        parts.push(format!(
-            "uprobe:{}:{} {{ @start{}[tid] = nsecs; }}",
-            self.program_path, function.0, tag
-        ));
-        parts.push(format!("uretprobe:{}:{} {{ @duration{tag} += nsecs - @start{tag}[tid]; @count{tag} += 1; delete(@start{tag}[tid]); }}", self.program_path, function.0, tag = tag));
-        parts.push(format!(r#"interval:s:1 {{ printf("{{\"time\": %d, \"traces\": {{\"{tag}\": [%lld, %lld]}} }}\n", (nsecs - @start_time) / 1000000000, @duration{tag}, @count{tag}); }}"#, tag = tag));
-        let expr = parts.concat();
-        log::debug!("Current bpftrace expression: {}", expr);
-        String::from(expr)
-    }
-
-    fn parse(line: &str) -> Result<TraceInfo, serde_json::Error> {
-        let info: TraceOutput = serde_json::from_str(line)?;
-        Ok(TraceInfo {
-            time: Duration::from_secs(info.time),
-            traces: info
-                .traces
-                .into_iter()
-                .map(|(tag, value)| {
-                    // If JSON parsing succeeded we assume it is valid output, so `tag` must be valid to parse
-                    (
-                        tag.parse::<u32>().unwrap(),
-                        TraceCumulative {
-                            duration: Duration::from_nanos(value.0),
-                            count: value.1,
-                        },
-                    )
-                })
-                .collect(),
-        })
     }
 }

@@ -4,17 +4,25 @@ use object::Object;
 use object::ObjectSection;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 /// Name corresponding to a function symbol that exists in the program
 pub struct FunctionName(pub &'static str);
 
+impl fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self.0, f)
+    }
+}
+
 pub struct Program {
     /// Only used when printing error messages
     pub file_path: String,
     file: object::read::File<'static>,
     name_to_symbol: HashMap<FunctionName, SymbolInfo>,
+    address_to_name: HashMap<u64, FunctionName>,
     context: addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
@@ -25,8 +33,7 @@ pub struct Program {
 struct SymbolInfo {
     name: FunctionName,
     demangled_name: Option<String>,
-    address: u64,
-    size: u64,
+    symbol: object::read::Symbol<'static>,
 }
 
 impl SymbolInfo {
@@ -69,15 +76,14 @@ impl Program {
 
         let function_names: Vec<SymbolInfo> = file
             .symbols()
-            .filter(|(_, symbol)| symbol.kind() == object::SymbolKind::Text)
+            .filter(|(_, symbol)| symbol.kind() == object::SymbolKind::Text) // Filter to functions
             .map(|(_, symbol)| {
                 symbol.name().map(|name| {
                     let demangled_name = cplus_demangle::demangle(name).ok();
                     SymbolInfo {
                         name: FunctionName(name),
                         demangled_name,
-                        address: symbol.address(),
-                        size: symbol.size(),
+                        symbol,
                     }
                 })
             })
@@ -92,12 +98,19 @@ impl Program {
         let name_to_symbol: HashMap<_, _> =
             function_names.into_iter().map(|si| (si.name, si)).collect();
 
+        let address_to_name: HashMap<_, _> = name_to_symbol
+            .iter()
+            .filter(|(n, s)| s.symbol.address() != 0)
+            .map(|(n, s)| (s.symbol.address(), n.clone()))
+            .collect();
+
         let context = new_context(&file).unwrap();
 
         Ok(Program {
             file_path,
             file,
             name_to_symbol,
+            address_to_name,
             context,
             dynamic_symbols_range,
         })
@@ -118,9 +131,21 @@ impl Program {
     }
 
     pub fn get_location(&self, function: FunctionName) -> Location {
-        let address = self.name_to_symbol.get(&function).unwrap().address;
+        let address = self.name_to_symbol.get(&function).unwrap().symbol.address();
         // TODO
         self.context.find_location(address).unwrap().unwrap()
+    }
+
+    pub fn get_data(&self, function: FunctionName) -> Result<Option<&[u8]>, Error> {
+        let symbol = &self.name_to_symbol.get(&function).unwrap().symbol;
+        if symbol.address() == 0 {
+            return Err(
+                format!("Cannot get data for dynamically linked symbol {}", function).into(),
+            );
+        }
+        self.file
+            .symbol_data(symbol)
+            .map_err(|err| format!("Error getting data for function {}: {}", function, err).into())
     }
 }
 

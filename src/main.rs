@@ -1,6 +1,7 @@
 mod controller;
 mod error;
 mod program;
+mod trace_structs;
 mod tracer;
 mod views;
 
