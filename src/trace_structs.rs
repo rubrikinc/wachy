@@ -8,7 +8,7 @@ use std::time::Duration;
 pub struct TraceInfo {
     /// Time for which current trace has been running
     pub time: Duration,
-    /// Map from tag to cumulative values
+    /// Map from line to cumulative values
     pub traces: HashMap<u32, TraceCumulative>,
 }
 
@@ -24,25 +24,31 @@ pub struct TraceCumulative {
 pub struct TraceStack {
     counter: AtomicU64,
     program_path: String,
-    // Stack of (tag, function being traced)
-    frames: Mutex<Vec<(u32, FrameInfo)>>,
+    /// Stack of functions being traced. Guaranteed to be non-empty.
+    pub frames: Mutex<Vec<FrameInfo>>,
 }
 
 pub struct FrameInfo {
     function: FunctionName,
-    // Map from source line numbers to call functions on that line
-    tag_to_callsite: HashMap<u32, Vec<CallSite>>,
+    source_file: String,
+    source_line: u32,
+    /// Map from source line numbers to call functions on that line
+    pub line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
 }
 
-pub struct CallSite {
-    // Relative to start of function
-    relative_address: u32,
-    is_call_to_dynamic_symbol: bool,
-    // Function being called, if it's a hardcoded function
+#[derive(Debug)]
+pub struct CallInstruction {
+    /// IP of call instruction, relative to start of function
+    relative_ip: u32,
+    /// Size of instruction
+    length: u8,
+    /// Address of dynamic symbol
+    dynamic_symbol_address: Option<u64>,
+    /// Function being called, if it's a hardcoded function
     function: Option<FunctionName>,
-    // Register being called. Note: must be a bpftrace register
-    // https://github.com/iovisor/bpftrace/blob/master/src/arch/x86_64.cpp,
-    // which notably does not have E or R prefixes.
+    /// Register being called. Note: must be a bpftrace register
+    /// https://github.com/iovisor/bpftrace/blob/master/src/arch/x86_64.cpp,
+    /// which notably does not have E or R prefixes.
     register: Option<String>,
 }
 
@@ -54,37 +60,47 @@ struct TraceOutput {
 }
 
 impl FrameInfo {
-    pub fn new(function: FunctionName, tag_to_callsite: HashMap<u32, Vec<CallSite>>) -> FrameInfo {
+    pub fn new(
+        function: FunctionName,
+        source_file: String,
+        source_line: u32,
+        line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
+    ) -> FrameInfo {
         FrameInfo {
             function,
-            tag_to_callsite,
+            source_file,
+            source_line,
+            line_to_callsites,
         }
     }
 }
 
-impl CallSite {
-    pub fn dynamic_symbol(relative_address: u32) -> CallSite {
-        CallSite {
-            relative_address,
-            is_call_to_dynamic_symbol: true,
+impl CallInstruction {
+    pub fn dynamic_symbol(relative_ip: u32, length: u8, address: u64) -> CallInstruction {
+        CallInstruction {
+            relative_ip,
+            length,
+            dynamic_symbol_address: Some(address),
             function: None,
             register: None,
         }
     }
 
-    pub fn function(relative_address: u32, function: FunctionName) -> CallSite {
-        CallSite {
-            relative_address,
-            is_call_to_dynamic_symbol: false,
+    pub fn function(relative_ip: u32, length: u8, function: FunctionName) -> CallInstruction {
+        CallInstruction {
+            relative_ip,
+            length,
+            dynamic_symbol_address: None,
             function: Some(function),
             register: None,
         }
     }
 
-    pub fn register(relative_address: u32, register: String) -> CallSite {
-        CallSite {
-            relative_address,
-            is_call_to_dynamic_symbol: false,
+    pub fn register(relative_ip: u32, length: u8, register: String) -> CallInstruction {
+        CallInstruction {
+            relative_ip,
+            length,
+            dynamic_symbol_address: None,
             function: None,
             register: Some(register),
         }
@@ -93,7 +109,7 @@ impl CallSite {
 
 impl TraceStack {
     pub fn new(program_path: String, tag: u32, frame: FrameInfo) -> TraceStack {
-        let frames = Mutex::new(vec![(tag, frame)]);
+        let frames = Mutex::new(vec![frame]);
         TraceStack {
             counter: AtomicU64::new(0),
             program_path,
@@ -110,9 +126,12 @@ impl TraceStack {
         let frames = self.frames.lock().unwrap();
         let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
         for (i, frame) in frames.iter().enumerate() {
-            if i != frames.len() - 1 {}
+            if i != frames.len() - 1 {
+                // TODO
+            }
         }
-        let (tag, frame) = frames.last().unwrap();
+        let frame = frames.last().unwrap();
+        let tag = frame.source_line;
         let function = frame.function;
         parts.push(format!(
             "uprobe:{}:{} {{ @start{}[tid] = nsecs; }}",

@@ -1,17 +1,22 @@
 use crate::error::Error;
-use crate::program::Program;
-use crate::trace_structs::{FrameInfo, TraceStack};
+use crate::program::{FunctionName, Program};
+use crate::trace_structs::{CallInstruction, FrameInfo, TraceStack};
 use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
+use zydis::enums::generated::{AddressWidth, FormatterStyle, MachineMode, Mnemonic};
+use zydis::ffi::Decoder;
+use zydis::formatter::{Formatter, OutputBuffer};
 
 pub struct Controller {
     program: Program,
     tracer: Tracer,
+    trace_stack: Arc<TraceStack>,
 }
 
 impl Controller {
@@ -19,7 +24,7 @@ impl Controller {
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
         let function = matches.into_iter().next().unwrap();
-        let location = program.get_location(function);
+        let location = program.get_location(program.get_address(function)).unwrap();
         let source_file = location.file.ok_or(format!("Failed to get source file name corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
         let source_line = location.line.ok_or(format!("Failed to get source file line number corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
         log::info!(
@@ -32,11 +37,17 @@ impl Controller {
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
             source_line,
-            FrameInfo::new(function, HashMap::new()),
+            Controller::create_frame_info(
+                &program,
+                function,
+                String::from(source_file),
+                source_line,
+            ),
         ));
         let (tx, rx) = mpsc::channel();
         let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
 
+        // TODO cache file contents
         let file = std::fs::File::open(source_file).unwrap();
         let source_code: Vec<String> = std::io::BufReader::new(file)
             .lines()
@@ -50,8 +61,20 @@ impl Controller {
                 .title(format!("wachy | {}", program.file_path))
                 .full_screen(),
         );
+        siv.add_global_callback('x', |s| {
+            let view = s.find_name::<views::SourceView>("source_view").unwrap();
+            let line = view.row().unwrap() as u32 + 1;
+            let controller = s.user_data::<Controller>().unwrap();
+            let guard = controller.trace_stack.frames.lock().unwrap();
+            let callsites = guard.last().unwrap().line_to_callsites.get(&line);
+            log::debug!("{:?}", callsites);
+        });
 
-        let controller = Controller { program, tracer };
+        let controller = Controller {
+            program,
+            tracer,
+            trace_stack,
+        };
         siv.set_user_data(controller);
 
         siv.refresh();
@@ -81,13 +104,64 @@ impl Controller {
                         // TODO check for err
                         let item = items.get_mut(line as usize - 1).unwrap();
                         if info.count != 0 {
-                            item.latency = Some(info.duration / info.count as u32);
+                            item.latency = Some(info.duration / u32::try_from(info.count).unwrap());
                         }
                         item.frequency = Some(info.count as f32 / data.time.as_secs_f32());
                     }
                 });
+                siv.refresh();
                 Ok(())
             }
         }
+    }
+
+    fn create_frame_info(
+        program: &Program,
+        function: FunctionName,
+        source_file: String,
+        source_line: u32,
+    ) -> FrameInfo {
+        let (start_address, code) = program.get_data(function).unwrap();
+        let formatter = Formatter::new(FormatterStyle::INTEL).unwrap();
+        let decoder = Decoder::new(MachineMode::LONG_64, AddressWidth::_64).unwrap();
+        let mut buffer = [0u8; 200];
+        let mut buffer = OutputBuffer::new(&mut buffer[..]);
+
+        let mut line_to_callsites = HashMap::<u32, Vec<CallInstruction>>::new();
+
+        // 0 is the address for our code.
+        for (instruction, ip) in decoder.instruction_iterator(code, start_address) {
+            if instruction.mnemonic == Mnemonic::CALL {
+                if log::log_enabled!(log::Level::Trace) {
+                    formatter
+                        .format_instruction(&instruction, &mut buffer, Some(ip), None)
+                        .unwrap();
+                    log::trace!("{} 0x{:016X} {}", instruction.operand_count, ip, buffer);
+                }
+
+                assert!(instruction.operand_count > 0);
+                let relative_ip = u32::try_from(ip - start_address).unwrap();
+                let call_address = instruction
+                    .calc_absolute_address(ip, &instruction.operands[0])
+                    .unwrap();
+                // TODO handle register
+                let callsite = if program.is_dynamic_symbol(call_address) {
+                    CallInstruction::dynamic_symbol(relative_ip, instruction.length, call_address)
+                } else {
+                    let function = program.get_function_for_address(call_address).unwrap();
+                    CallInstruction::function(relative_ip, instruction.length, function)
+                };
+                let location = program.get_location(ip).unwrap();
+                assert!(location.file.unwrap() == source_file);
+                line_to_callsites
+                    .entry(location.line.unwrap())
+                    .or_default()
+                    .push(callsite);
+            }
+        }
+
+        log::trace!("{:?}", line_to_callsites);
+
+        FrameInfo::new(function, source_file, source_line, line_to_callsites)
     }
 }

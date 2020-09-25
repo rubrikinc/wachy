@@ -78,24 +78,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "capstone"
-version = "0.7.0"
+name = "bitflags"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f60e7f097987a09a9b678c6214b5a5eb326f9fc1e3eac88cce5d086c2b3b8dc9"
-dependencies = [
- "capstone-sys",
- "libc",
-]
-
-[[package]]
-name = "capstone-sys"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aebe07897b48983847943662bfc3198aabfa51636c81313c1955d04d857ed739"
-dependencies = [
- "cc",
- "libc",
-]
+checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
 name = "cc"
@@ -118,6 +104,15 @@ dependencies = [
  "num-integer",
  "num-traits",
  "time",
+]
+
+[[package]]
+name = "cmake"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e56268c17a6248366d66d4a47a3381369d068cce8409bb1716ed77ea32163bb"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -751,7 +746,6 @@ version = "0.1.0"
 dependencies = [
  "addr2line 0.13.0",
  "backtrace",
- "capstone",
  "cplus_demangle",
  "cursive",
  "cursive_table_view",
@@ -764,6 +758,7 @@ dependencies = [
  "serde",
  "serde_json",
  "simple-logging",
+ "zydis",
 ]
 
 [[package]]
@@ -811,3 +806,13 @@ name = "xi-unicode"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e71b85d8b1b8bfaf4b5c834187554d201a8cd621c2bbfa33efd41a3ecabd48b2"
+
+[[package]]
+name = "zydis"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cae82593755d76e8aa27c10281724173717a29b48ae523cb9c5980bc4b4d0a1"
+dependencies = [
+ "bitflags",
+ "cmake",
+]

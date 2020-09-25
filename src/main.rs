@@ -43,7 +43,7 @@ fn main() {
     std::panic::set_hook(Box::new(|info: &PanicInfo| {
         // TODO write to separate log file, print after dropping cursive
         let mut msg = String::new();
-        let _ = writeln!(msg, "Panic! [v{}].", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(msg, "Panic! [v{}]", env!("CARGO_PKG_VERSION"));
         if let Some(payload) = info.payload().downcast_ref::<&str>() {
             let _ = writeln!(msg, "Cause: {}", payload);
         }

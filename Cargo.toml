@@ -9,7 +9,6 @@ edition = "2018"
 [dependencies]
 addr2line = { path = "../addr2line" }
 backtrace = "0.3.50"
-capstone = "0.7.0"
 cplus_demangle = "0.1.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }
@@ -22,3 +21,4 @@ object = "0.20"
 serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0.57"
 simple-logging = "2.0.2"
+zydis = "3.1.1"

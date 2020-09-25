@@ -26,7 +26,7 @@ pub struct Program {
     context: addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
-    dynamic_symbols_range: (u64, u64),
+    dynamic_symbols_range: std::ops::Range<u64>,
 }
 
 #[derive(Debug)]
@@ -70,7 +70,10 @@ impl Program {
         let dynamic_symbols_range = file
             .sections()
             .filter(|s| s.name().unwrap() == ".plt")
-            .map(|s| (s.address(), s.size()))
+            .map(|s| std::ops::Range {
+                start: s.address(),
+                end: s.address() + s.size(),
+            })
             .next()
             .unwrap();
 
@@ -100,7 +103,7 @@ impl Program {
 
         let address_to_name: HashMap<_, _> = name_to_symbol
             .iter()
-            .filter(|(n, s)| s.symbol.address() != 0)
+            .filter(|(_, s)| s.symbol.address() != 0)
             .map(|(n, s)| (s.symbol.address(), n.clone()))
             .collect();
 
@@ -130,15 +133,22 @@ impl Program {
         matches
     }
 
-    pub fn get_location(&self, function: FunctionName) -> Location {
-        let address = self.name_to_symbol.get(&function).unwrap().symbol.address();
-        // TODO
-        self.context.find_location(address).unwrap().unwrap()
+    pub fn get_address(&self, function: FunctionName) -> u64 {
+        self.name_to_symbol.get(&function).unwrap().symbol.address()
     }
 
-    pub fn get_data(&self, function: FunctionName) -> Result<Option<&[u8]>, Error> {
+    pub fn get_location(&self, address: u64) -> Option<Location> {
+        match self.context.find_location(address) {
+            Ok(l) => l,
+            Err(_) => None,
+        }
+    }
+
+    // Returns (address, data) for given function
+    pub fn get_data(&self, function: FunctionName) -> Result<(u64, &[u8]), Error> {
         let symbol = &self.name_to_symbol.get(&function).unwrap().symbol;
-        if symbol.address() == 0 {
+        let address = symbol.address();
+        if address == 0 {
             return Err(
                 format!("Cannot get data for dynamically linked symbol {}", function).into(),
             );
@@ -146,6 +156,15 @@ impl Program {
         self.file
             .symbol_data(symbol)
             .map_err(|err| format!("Error getting data for function {}: {}", function, err).into())
+            .map(|data| (address, data.unwrap()))
+    }
+
+    pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {
+        self.address_to_name.get(&address).map(|f| f.clone())
+    }
+
+    pub fn is_dynamic_symbol(&self, address: u64) -> bool {
+        return self.dynamic_symbols_range.contains(&address);
     }
 }
 

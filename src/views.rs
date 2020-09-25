@@ -101,6 +101,6 @@ pub fn new_source_view(source: Vec<String>, selected_line: u32) -> SourceView {
             line,
         })
         .collect();
-    table = table.items(items).selected_item(selected_line as usize - 1);
+    table = table.items(items).selected_row(selected_line as usize - 1);
     table
 }
