@@ -1,6 +1,6 @@
 use crate::program::FunctionName;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -25,7 +25,7 @@ pub struct TraceStack {
     counter: AtomicU64,
     program_path: String,
     /// Stack of functions being traced. Guaranteed to be non-empty.
-    pub frames: Mutex<Vec<FrameInfo>>,
+    frames: Mutex<Vec<FrameInfo>>,
 }
 
 pub struct FrameInfo {
@@ -33,10 +33,12 @@ pub struct FrameInfo {
     source_file: String,
     source_line: u32,
     /// Map from source line numbers to call functions on that line
-    pub line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
+    line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
+    /// Function calls to trace. Currently we only allow one per line.
+    traced_callsites: HashMap<u32, CallInstruction>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallInstruction {
     /// IP of call instruction, relative to start of function
     relative_ip: u32,
@@ -55,7 +57,7 @@ pub struct CallInstruction {
 #[derive(serde::Deserialize, Debug)]
 struct TraceOutput {
     time: u64,
-    // Map from (stringified) tag to (duration, count)
+    // Map from (stringified) line to (duration, count)
     traces: HashMap<String, (u64, u64)>,
 }
 
@@ -71,6 +73,7 @@ impl FrameInfo {
             source_file,
             source_line,
             line_to_callsites,
+            traced_callsites: HashMap::new(),
         }
     }
 }
@@ -108,7 +111,7 @@ impl CallInstruction {
 }
 
 impl TraceStack {
-    pub fn new(program_path: String, tag: u32, frame: FrameInfo) -> TraceStack {
+    pub fn new(program_path: String, frame: FrameInfo) -> TraceStack {
         let frames = Mutex::new(vec![frame]);
         TraceStack {
             counter: AtomicU64::new(0),
@@ -117,12 +120,38 @@ impl TraceStack {
         }
     }
 
+    pub fn get_callsites(&self, line: u32) -> Vec<CallInstruction> {
+        let guard = self.frames.lock().unwrap();
+        let callsites = guard
+            .last()
+            .unwrap()
+            .line_to_callsites
+            .get(&line)
+            .map(|v| v.clone())
+            .unwrap_or_default();
+        log::debug!("{:?}", callsites);
+        callsites
+    }
+
+    pub fn add_callsite(&self, line: u32, ci: CallInstruction) {
+        // We rely on the lock for actual ordering
+        self.counter.fetch_add(1, Ordering::Relaxed);
+        let mut guard = self.frames.lock().unwrap();
+        let mut top_frame = guard.last_mut().unwrap();
+        assert!(top_frame
+            .line_to_callsites
+            .get(&line)
+            .unwrap()
+            .contains(&ci));
+        top_frame.traced_callsites.insert(line, ci);
+    }
+
     /// Panics if called with empty stack
     pub fn get_bpftrace_expr(&self) -> String {
         // Example:
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
-        // We use tag number in variable naming to identify the results.
-        // TODO add tests
+        // We use line number in variable naming to identify the results.
+        // TODO add tests, update examples
         let frames = self.frames.lock().unwrap();
         let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
         for (i, frame) in frames.iter().enumerate() {
@@ -131,17 +160,43 @@ impl TraceStack {
             }
         }
         let frame = frames.last().unwrap();
-        let tag = frame.source_line;
+        let line = frame.source_line;
+        let mut lines = vec![line];
         let function = frame.function;
         parts.push(format!(
-            "uprobe:{}:{} {{ @start{}[tid] = nsecs; }}",
-            self.program_path, function, tag
+            "uprobe:{}:{} {{ @start{}[tid] = nsecs; }} ",
+            self.program_path, function, line
         ));
-        parts.push(format!("uretprobe:{}:{} {{ @duration{tag} += nsecs - @start{tag}[tid]; @count{tag} += 1; delete(@start{tag}[tid]); }}", self.program_path, function, tag = tag));
-        parts.push(format!(r#"interval:s:1 {{ printf("{{\"time\": %d, \"traces\": {{\"{tag}\": [%lld, %lld]}} }}\n", (nsecs - @start_time) / 1000000000, @duration{tag}, @count{tag}); }}"#, tag = tag));
+        parts.push(format!("uretprobe:{}:{} {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+
+        for (&line, callsite) in &frame.traced_callsites {
+            lines.push(line);
+            parts.push(format!(
+                "uprobe:{}:{}+{} {{ @start{}[tid] = nsecs; }} ",
+                self.program_path, function, callsite.relative_ip, line
+            ));
+            parts.push(format!(
+                "uprobe:{}:{}+{} /@start{line}[tid] != 0/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
+                self.program_path, function, callsite.relative_ip + callsite.length as u32, line = line));
+        }
+
+        parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"#.into());
+        // Pass 1: get all the formatting specifiers
+        for (i, line) in lines.iter().enumerate() {
+            parts.push(format!(r#"\"{}\": [%lld, %lld]"#, line));
+            if i != lines.len() - 1 {
+                parts.push(", ".into());
+            }
+        }
+        parts.push(r#"}}\n""#.into());
+        // Pass 2: print all the values
+        for line in lines {
+            parts.push(format!(", @duration{line}, @count{line}", line = line));
+        }
+        parts.push(r#"); }"#.into());
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
-        String::from(expr)
+        expr
     }
 
     pub fn parse(line: &str) -> Result<TraceInfo, serde_json::Error> {
@@ -151,10 +206,10 @@ impl TraceStack {
             traces: info
                 .traces
                 .into_iter()
-                .map(|(tag, value)| {
-                    // If JSON parsing succeeded we assume it is valid output, so `tag` must be valid to parse
+                .map(|(line, value)| {
+                    // If JSON parsing succeeded we assume it is valid output, so `line` must be valid to parse
                     (
-                        tag.parse::<u32>().unwrap(),
+                        line.parse::<u32>().unwrap(),
                         TraceCumulative {
                             duration: Duration::from_nanos(value.0),
                             count: value.1,

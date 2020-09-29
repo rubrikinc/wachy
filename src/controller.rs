@@ -36,7 +36,6 @@ impl Controller {
 
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
-            source_line,
             Controller::create_frame_info(
                 &program,
                 function,
@@ -65,9 +64,15 @@ impl Controller {
             let view = s.find_name::<views::SourceView>("source_view").unwrap();
             let line = view.row().unwrap() as u32 + 1;
             let controller = s.user_data::<Controller>().unwrap();
-            let guard = controller.trace_stack.frames.lock().unwrap();
-            let callsites = guard.last().unwrap().line_to_callsites.get(&line);
-            log::debug!("{:?}", callsites);
+            let callsites = controller.trace_stack.get_callsites(line);
+            if callsites.len() > 0 {
+                // TODO check > 1
+                controller.update_trace_stack(|ts: &TraceStack| {
+                    ts.add_callsite(line, callsites.into_iter().nth(0).unwrap())
+                })
+            } else {
+                // TODO show error
+            }
         });
 
         let controller = Controller {
@@ -163,5 +168,13 @@ impl Controller {
         log::trace!("{:?}", line_to_callsites);
 
         FrameInfo::new(function, source_file, source_line, line_to_callsites)
+    }
+
+    pub fn update_trace_stack<F>(&self, f: F)
+    where
+        F: FnOnce(&TraceStack),
+    {
+        f(self.trace_stack.as_ref());
+        self.tracer.rerun_tracer();
     }
 }
