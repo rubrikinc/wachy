@@ -6,6 +6,8 @@ use std::time::Duration;
 
 /// Format in which trace data is passed back
 pub struct TraceInfo {
+    /// Counter corresponding to when bpftrace command was last updated
+    pub counter: u64,
     /// Time for which current trace has been running
     pub time: Duration,
     /// Map from line to cumulative values
@@ -134,10 +136,9 @@ impl TraceStack {
     }
 
     pub fn add_callsite(&self, line: u32, ci: CallInstruction) {
-        // We rely on the lock for actual ordering
-        self.counter.fetch_add(1, Ordering::Relaxed);
+        // No need to update counter - any existing trace data is still valid
         let mut guard = self.frames.lock().unwrap();
-        let mut top_frame = guard.last_mut().unwrap();
+        let top_frame = guard.last_mut().unwrap();
         assert!(top_frame
             .line_to_callsites
             .get(&line)
@@ -146,8 +147,10 @@ impl TraceStack {
         top_frame.traced_callsites.insert(line, ci);
     }
 
+    /// Get appropriate bpftrace expression for current state, along with
+    /// current counter value.
     /// Panics if called with empty stack
-    pub fn get_bpftrace_expr(&self) -> String {
+    pub fn get_bpftrace_expr(&self) -> (String, u64) {
         // Example:
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
         // We use line number in variable naming to identify the results.
@@ -196,12 +199,14 @@ impl TraceStack {
         parts.push(r#"); }"#.into());
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
-        expr
+        (expr, self.counter.load(Ordering::Relaxed))
     }
 
-    pub fn parse(line: &str) -> Result<TraceInfo, serde_json::Error> {
+    /// Parse bpftrace output
+    pub fn parse(line: &str, counter: u64) -> Result<TraceInfo, serde_json::Error> {
         let info: TraceOutput = serde_json::from_str(line)?;
         Ok(TraceInfo {
+            counter,
             time: Duration::from_secs(info.time),
             traces: info
                 .traces
@@ -218,5 +223,9 @@ impl TraceStack {
                 })
                 .collect(),
         })
+    }
+
+    pub fn is_counter_current(&self, counter: u64) -> bool {
+        return counter == self.counter.load(Ordering::Acquire);
     }
 }

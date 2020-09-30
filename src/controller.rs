@@ -65,11 +65,14 @@ impl Controller {
             let line = view.row().unwrap() as u32 + 1;
             let controller = s.user_data::<Controller>().unwrap();
             let callsites = controller.trace_stack.get_callsites(line);
-            if callsites.len() > 0 {
-                // TODO check > 1
-                controller.update_trace_stack(|ts: &TraceStack| {
-                    ts.add_callsite(line, callsites.into_iter().nth(0).unwrap())
-                })
+            if !callsites.is_empty() {
+                if callsites.len() > 1 {
+                    // TODO
+                } else {
+                    controller.update_trace_stack(|ts: &TraceStack| {
+                        ts.add_callsite(line, callsites.into_iter().nth(0).unwrap())
+                    });
+                }
             } else {
                 // TODO show error
             }
@@ -103,6 +106,16 @@ impl Controller {
                 Err(message.into())
             }
             TraceData::Data(data) => {
+                // Ignore any data that doesn't correspond to current view. The trace command should
+                // already be in the process of being updated.
+                if !siv
+                    .user_data::<Controller>()
+                    .unwrap()
+                    .trace_stack
+                    .is_counter_current(data.counter)
+                {
+                    return Ok(());
+                }
                 siv.call_on_name("source_view", |table: &mut views::SourceView| {
                     let items = table.borrow_items_mut();
                     for (line, info) in data.traces {

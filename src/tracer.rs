@@ -108,7 +108,7 @@ impl TraceCommandHandler {
         });
         self.output_processor.take().map(|t| t.join());
 
-        let expr = self.trace_stack.get_bpftrace_expr();
+        let (expr, counter) = self.trace_stack.get_bpftrace_expr();
         let mut program = Command::new("bpftrace")
             .args(&["-e", &expr])
             .stdout(Stdio::piped())
@@ -132,7 +132,7 @@ impl TraceCommandHandler {
                 if !line.starts_with("{") {
                     continue;
                 }
-                let parsed = TraceStack::parse(&line);
+                let parsed = TraceStack::parse(&line, counter);
                 let parsed = match parsed {
                     Err(err) => {
                         log::error!("Error parsing bpftrace output: {:?}", err);
