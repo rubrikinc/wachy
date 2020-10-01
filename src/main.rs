@@ -10,7 +10,7 @@ use std::fmt::Write;
 use std::panic::PanicInfo;
 
 fn setup_logging() {
-    if let Ok(var) = env::var("RUST_LOG") {
+    if let Ok(var) = env::var("WACHY_LOG") {
         let filter = match &var[..] {
             "error" => Some(log::LevelFilter::Error),
             "warn" => Some(log::LevelFilter::Warn),

@@ -78,6 +78,11 @@ impl FrameInfo {
             traced_callsites: HashMap::new(),
         }
     }
+
+    /// Source line numbers that contain a call instruction
+    pub fn called_lines(&self) -> Vec<u32> {
+        self.line_to_callsites.keys().map(|l| *l).collect()
+    }
 }
 
 impl CallInstruction {
@@ -135,8 +140,8 @@ impl TraceStack {
         callsites
     }
 
+    /// Note: does not update counter as any existing trace data is presumed to still be valid
     pub fn add_callsite(&self, line: u32, ci: CallInstruction) {
-        // No need to update counter - any existing trace data is still valid
         let mut guard = self.frames.lock().unwrap();
         let top_frame = guard.last_mut().unwrap();
         assert!(top_frame

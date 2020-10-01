@@ -34,15 +34,14 @@ impl Controller {
             source_line
         );
 
-        let trace_stack = Arc::new(TraceStack::new(
-            program.file_path.clone(),
-            Controller::create_frame_info(
-                &program,
-                function,
-                String::from(source_file),
-                source_line,
-            ),
-        ));
+        let frame_info = Controller::create_frame_info(
+            &program,
+            function,
+            String::from(source_file),
+            source_line,
+        );
+        let call_lines = frame_info.called_lines();
+        let trace_stack = Arc::new(TraceStack::new(program.file_path.clone(), frame_info));
         let (tx, rx) = mpsc::channel();
         let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
 
@@ -53,21 +52,24 @@ impl Controller {
             .map(|l| l.unwrap())
             .collect();
 
-        let source_view = views::new_source_view(source_code, source_line);
+        let source_view = views::new_source_view(source_code, source_line, call_lines);
         let mut siv = cursive::default();
         siv.add_layer(
             cursive::views::Dialog::around(source_view.with_name("source_view"))
                 .title(format!("wachy | {}", program.file_path))
                 .full_screen(),
         );
-        siv.add_global_callback('x', |s| {
-            let view = s.find_name::<views::SourceView>("source_view").unwrap();
+        siv.add_global_callback('x', |siv| {
+            let view = siv.find_name::<views::SourceView>("source_view").unwrap();
             let line = view.row().unwrap() as u32 + 1;
-            let controller = s.user_data::<Controller>().unwrap();
+            let controller = siv.user_data::<Controller>().unwrap();
             let callsites = controller.trace_stack.get_callsites(line);
             if !callsites.is_empty() {
                 if callsites.len() > 1 {
-                    // TODO
+                    siv.add_layer(views::new_search_view(
+                        "Select the call to trace",
+                        callsites,
+                    ));
                 } else {
                     controller.update_trace_stack(|ts: &TraceStack| {
                         ts.add_callsite(line, callsites.into_iter().nth(0).unwrap())
