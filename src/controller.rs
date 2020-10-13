@@ -69,7 +69,12 @@ impl Controller {
                     siv.add_layer(views::new_search_view(
                         "Select the call to trace",
                         callsites,
-                        |_, _| {},
+                        move |siv: &mut Cursive, ci: &CallInstruction| {
+                            let controller = siv.user_data::<Controller>().unwrap();
+                            controller.update_trace_stack(|ts: &TraceStack| {
+                                ts.add_callsite(line, ci.clone())
+                            });
+                        },
                     ));
                 } else {
                     controller.update_trace_stack(|ts: &TraceStack| {

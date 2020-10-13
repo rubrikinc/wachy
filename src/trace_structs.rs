@@ -121,6 +121,7 @@ impl From<CallInstruction> for String {
     fn from(c: CallInstruction) -> Self {
         let mut out = format!("{}: ", c.relative_ip);
         if let Some(addr) = c.dynamic_symbol_address {
+            // TODO get symbol name
             out += &addr.to_string();
         }
         if let Some(function) = c.function {
@@ -172,10 +173,10 @@ impl TraceStack {
     /// current counter value.
     /// Panics if called with empty stack
     pub fn get_bpftrace_expr(&self) -> (String, u64) {
+        // TODO add tests, update examples
         // Example:
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
         // We use line number in variable naming to identify the results.
-        // TODO add tests, update examples
         let frames = self.frames.lock().unwrap();
         let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
         for (i, frame) in frames.iter().enumerate() {
@@ -204,20 +205,20 @@ impl TraceStack {
                 self.program_path, function, callsite.relative_ip + callsite.length as u32, line = line));
         }
 
-        parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"#.into());
+        parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"); "#.into());
         // Pass 1: get all the formatting specifiers
         for (i, line) in lines.iter().enumerate() {
-            parts.push(format!(r#"\"{}\": [%lld, %lld]"#, line));
+            let mut format_str = format!(r#"\"{}\": [%lld, %lld]"#, line);
             if i != lines.len() - 1 {
-                parts.push(", ".into());
+                format_str.push_str(", ");
             }
+            parts.push(format!(
+                r#"printf("{format_str}", @duration{line}, @count{line}); "#,
+                format_str = format_str,
+                line = line
+            ));
         }
-        parts.push(r#"}}\n""#.into());
-        // Pass 2: print all the values
-        for line in lines {
-            parts.push(format!(", @duration{line}, @count{line}", line = line));
-        }
-        parts.push(r#"); }"#.into());
+        parts.push(r#"printf("}}\n"); }"#.into());
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
         (expr, self.counter.load(Ordering::Relaxed))

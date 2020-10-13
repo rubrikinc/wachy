@@ -135,7 +135,11 @@ impl TraceCommandHandler {
                 let parsed = TraceStack::parse(&line, counter);
                 let parsed = match parsed {
                     Err(err) => {
-                        log::error!("Error parsing bpftrace output: {:?}", err);
+                        tx.send(TraceData::FatalError(format!(
+                            "Failed to parse bpftrace output '{}': {:?}",
+                            line, err
+                        )))
+                        .unwrap();
                         continue;
                     }
                     Ok(parsed) => parsed,
