@@ -117,6 +117,22 @@ impl CallInstruction {
     }
 }
 
+impl From<CallInstruction> for String {
+    fn from(c: CallInstruction) -> Self {
+        let mut out = format!("{}: ", c.relative_ip);
+        if let Some(addr) = c.dynamic_symbol_address {
+            out += &addr.to_string();
+        }
+        if let Some(function) = c.function {
+            out += function.0;
+        }
+        if let Some(register) = c.register {
+            out += &register;
+        }
+        out
+    }
+}
+
 impl TraceStack {
     pub fn new(program_path: String, frame: FrameInfo) -> TraceStack {
         let frames = Mutex::new(vec![frame]);

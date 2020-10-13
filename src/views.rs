@@ -1,6 +1,12 @@
 use core::cmp::Ordering;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, SelectView};
+use cursive::Cursive;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+use itertools::Itertools;
+use std::borrow::Borrow;
+use std::rc::Rc;
 
 mod source_view {
     use std::time::Duration;
@@ -126,21 +132,88 @@ pub fn new_source_view(
 pub type SearchView = ResizedView<Dialog>;
 
 const SEARCH_VIEW_WIDTH: usize = 40;
+const SEARCH_VIEW_HEIGHT: usize = 8;
 
-pub fn new_search_view<T>(title: &str, entries: Vec<T>) -> SearchView {
-    let edit_view = EditView::new()
-        // .on_submit(ok)
-        .with_name("name")
-        .fixed_width(SEARCH_VIEW_WIDTH);
-    let select_view = SelectView::<String>::new()
-        // .on_submit(on_submit)
-        .with_name("select")
+/// `title` must be unique (it is used in the name of the view).
+pub fn new_search_view<T, F>(title: &str, items: Vec<T>, callback: F) -> SearchView
+where
+    T: Clone + Into<String> + 'static,
+    F: Fn(&mut Cursive, &T) + 'static,
+{
+    let cb = Rc::new(callback);
+    let cb_copy = Rc::clone(&cb);
+    let name = format!("select_{}", title);
+    let name_copy = name.clone();
+    let items: Vec<(String, T)> = items.into_iter().map(|i| (i.clone().into(), i)).collect();
+    let mut select_view = SelectView::<T>::new();
+    for (label, value) in items.iter().take(SEARCH_VIEW_HEIGHT) {
+        select_view.add_item(label, value.clone());
+    }
+    let select_view = select_view
+        .on_submit(move |siv: &mut Cursive, item: &T| {
+            siv.pop_layer();
+            cb(siv, item);
+        })
+        .with_name(&name)
         .fixed_size((SEARCH_VIEW_WIDTH, 8));
-    Dialog::around(
-        LinearLayout::horizontal()
-            .child(edit_view)
-            .child(select_view),
-    )
-    .title(title)
-    .fixed_width(SEARCH_VIEW_WIDTH)
+
+    let matcher = SkimMatcherV2::default();
+    let update_edit_view = move |siv: &mut Cursive, search: &str, _| {
+        let mut select_view = siv.find_name::<SelectView<T>>(&name).unwrap();
+        let matches = items
+            .iter()
+            .filter_map(|i| match matcher.fuzzy_match(&i.0, search) {
+                Some(score) => Some((score, i)),
+                None => None,
+            })
+            .sorted_by(|(score1, _), (score2, _)| score1.cmp(score2).reverse());
+        select_view.clear();
+        for (_, (label, value)) in matches.take(SEARCH_VIEW_HEIGHT) {
+            select_view.add_item(label, value.clone());
+        }
+    };
+    let edit_view = EditView::new()
+        .filler(" ")
+        .on_edit_mut(update_edit_view)
+        .on_submit(move |siv: &mut Cursive, _| {
+            let select_view = siv.find_name::<SelectView<T>>(&name_copy).unwrap();
+            if let Some(item) = select_view.selection() {
+                siv.pop_layer();
+                cb_copy(siv, item.borrow());
+            }
+        })
+        .with_name(format!("search_{}", title))
+        .fixed_width(SEARCH_VIEW_WIDTH);
+
+    Dialog::around(LinearLayout::vertical().child(edit_view).child(select_view))
+        .title(title)
+        .fixed_width(SEARCH_VIEW_WIDTH)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore]
+    /// Just set up a simple example search view for quicker iteration/manual testing
+    fn test_search_view() {
+        let mut siv = cursive::default();
+        let items = vec![
+            "Bananas",
+            "Apples",
+            "Grapes",
+            "Strawberries",
+            "Oranges",
+            "Watermelons",
+            "Lemons",
+            "Avocados",
+        ];
+        let callback = |siv: &mut Cursive, selection: &&str| {
+            siv.add_layer(
+                Dialog::text(format!("You selected: {}", selection)).button("Quit", Cursive::quit),
+            );
+        };
+        siv.add_layer(new_search_view("test", items, callback));
+        siv.run();
+    }
 }

@@ -69,6 +69,7 @@ impl Controller {
                     siv.add_layer(views::new_search_view(
                         "Select the call to trace",
                         callsites,
+                        |_, _| {},
                     ));
                 } else {
                     controller.update_trace_stack(|ts: &TraceStack| {
