@@ -56,8 +56,8 @@ impl Tracer {
 
     /// Rerun tracer after modifying TraceStack (results of which will be sent
     /// to the callback). This is non-blocking - actual tracing updates will
-    /// happen in the background. However, the callback is guaranteed to only be
-    /// called if TraceStack::counter matches what it was when the tracer was
+    /// happen in the background. However, `data_tx` is guaranteed to only be
+    /// sent to if TraceStack::counter matches what it was when the tracer was
     /// started.
     pub fn rerun_tracer(&self) {
         self.tx.send(TraceCommand::RerunTracer).unwrap()

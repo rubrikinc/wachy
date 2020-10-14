@@ -1,6 +1,7 @@
 use crate::program::FunctionName;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -27,7 +28,14 @@ pub struct TraceStack {
     counter: AtomicU64,
     program_path: String,
     /// Stack of functions being traced. Guaranteed to be non-empty.
-    frames: Mutex<Vec<FrameInfo>>,
+    stack: Mutex<Frames>,
+}
+
+pub struct Frames {
+    frames: Vec<FrameInfo>,
+    /// Gets notified whenever the stack is modified (i.e. get_bpftrace_expr
+    /// would change).
+    tx: Sender<()>,
 }
 
 pub struct FrameInfo {
@@ -135,18 +143,22 @@ impl From<CallInstruction> for String {
 }
 
 impl TraceStack {
-    pub fn new(program_path: String, frame: FrameInfo) -> TraceStack {
-        let frames = Mutex::new(vec![frame]);
+    pub fn new(program_path: String, frame: FrameInfo, tx: Sender<()>) -> TraceStack {
+        let stack = Mutex::new(Frames {
+            frames: vec![frame],
+            tx,
+        });
         TraceStack {
             counter: AtomicU64::new(0),
             program_path,
-            frames,
+            stack,
         }
     }
 
     pub fn get_callsites(&self, line: u32) -> Vec<CallInstruction> {
-        let guard = self.frames.lock().unwrap();
+        let guard = self.stack.lock().unwrap();
         let callsites = guard
+            .frames
             .last()
             .unwrap()
             .line_to_callsites
@@ -159,14 +171,26 @@ impl TraceStack {
 
     /// Note: does not update counter as any existing trace data is presumed to still be valid
     pub fn add_callsite(&self, line: u32, ci: CallInstruction) {
-        let mut guard = self.frames.lock().unwrap();
-        let top_frame = guard.last_mut().unwrap();
+        let mut guard = self.stack.lock().unwrap();
+        let top_frame = guard.frames.last_mut().unwrap();
         assert!(top_frame
             .line_to_callsites
             .get(&line)
             .unwrap()
             .contains(&ci));
         top_frame.traced_callsites.insert(line, ci);
+        guard.tx.send(()).unwrap();
+    }
+
+    /// Remove traced callsite, returning true if one exists corresponding to this line.
+    pub fn remove_callsite(&self, line: u32) -> bool {
+        let mut guard = self.stack.lock().unwrap();
+        let top_frame = guard.frames.last_mut().unwrap();
+        top_frame
+            .traced_callsites
+            .remove(&line)
+            .map(|_| guard.tx.send(()))
+            .is_some()
     }
 
     /// Get appropriate bpftrace expression for current state, along with
@@ -177,7 +201,8 @@ impl TraceStack {
         // Example:
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
         // We use line number in variable naming to identify the results.
-        let frames = self.frames.lock().unwrap();
+        let guard = self.stack.lock().unwrap();
+        let frames = &guard.frames;
         let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
         for (i, frame) in frames.iter().enumerate() {
             if i != frames.len() - 1 {

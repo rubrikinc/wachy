@@ -41,9 +41,14 @@ impl Controller {
             source_line,
         );
         let call_lines = frame_info.called_lines();
-        let trace_stack = Arc::new(TraceStack::new(program.file_path.clone(), frame_info));
-        let (tx, rx) = mpsc::channel();
-        let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
+        let (stack_tx, stack_rx) = mpsc::channel();
+        let trace_stack = Arc::new(TraceStack::new(
+            program.file_path.clone(),
+            frame_info,
+            stack_tx,
+        ));
+        let (trace_tx, trace_rx) = mpsc::channel();
+        let tracer = Tracer::new(Arc::clone(&trace_stack), trace_tx)?;
 
         // TODO cache file contents
         let file = std::fs::File::open(source_file).unwrap();
@@ -63,6 +68,12 @@ impl Controller {
             let view = siv.find_name::<views::SourceView>("source_view").unwrap();
             let line = view.row().unwrap() as u32 + 1;
             let controller = siv.user_data::<Controller>().unwrap();
+            // We want to toggle tracing at this line - try to remove if it
+            // exists, otherwise proceed to add callsite.
+            if controller.trace_stack.remove_callsite(line) {
+                return;
+            }
+
             let callsites = controller.trace_stack.get_callsites(line);
             if !callsites.is_empty() {
                 if callsites.len() > 1 {
@@ -71,15 +82,13 @@ impl Controller {
                         callsites,
                         move |siv: &mut Cursive, ci: &CallInstruction| {
                             let controller = siv.user_data::<Controller>().unwrap();
-                            controller.update_trace_stack(|ts: &TraceStack| {
-                                ts.add_callsite(line, ci.clone())
-                            });
+                            controller.trace_stack.add_callsite(line, ci.clone());
                         },
                     ));
                 } else {
-                    controller.update_trace_stack(|ts: &TraceStack| {
-                        ts.add_callsite(line, callsites.into_iter().nth(0).unwrap())
-                    });
+                    controller
+                        .trace_stack
+                        .add_callsite(line, callsites.into_iter().nth(0).unwrap());
                 }
             } else {
                 // TODO show error
@@ -96,7 +105,18 @@ impl Controller {
         siv.refresh();
         while siv.is_running() {
             siv.step();
-            match rx.try_recv() {
+
+            match stack_rx.try_recv() {
+                Ok(_) => {
+                    siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(format!("Unexpected error: trace channel disconnected").into())
+                }
+                Err(mpsc::TryRecvError::Empty) => (),
+            }
+
+            match trace_rx.try_recv() {
                 Ok(data) => Controller::handle_trace_data(&mut siv, data)?,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     return Err(format!("Unexpected error: trace channel disconnected").into())
@@ -189,13 +209,5 @@ impl Controller {
         log::trace!("{:?}", line_to_callsites);
 
         FrameInfo::new(function, source_file, source_line, line_to_callsites)
-    }
-
-    pub fn update_trace_stack<F>(&self, f: F)
-    where
-        F: FnOnce(&TraceStack),
-    {
-        f(self.trace_stack.as_ref());
-        self.tracer.rerun_tracer();
     }
 }
