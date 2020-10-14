@@ -186,11 +186,13 @@ impl TraceStack {
     pub fn remove_callsite(&self, line: u32) -> bool {
         let mut guard = self.stack.lock().unwrap();
         let top_frame = guard.frames.last_mut().unwrap();
-        top_frame
-            .traced_callsites
-            .remove(&line)
-            .map(|_| guard.tx.send(()))
-            .is_some()
+        if top_frame.traced_callsites.remove(&line).is_some() {
+            self.counter.fetch_add(1, Ordering::Release);
+            guard.tx.send(()).unwrap();
+            true
+        } else {
+            false
+        }
     }
 
     /// Get appropriate bpftrace expression for current state, along with
@@ -231,7 +233,6 @@ impl TraceStack {
         }
 
         parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"); "#.into());
-        // Pass 1: get all the formatting specifiers
         for (i, line) in lines.iter().enumerate() {
             let mut format_str = format!(r#"\"{}\": [%lld, %lld]"#, line);
             if i != lines.len() - 1 {
@@ -246,6 +247,7 @@ impl TraceStack {
         parts.push(r#"printf("}}\n"); }"#.into());
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
+        // Since we hold lock we know counter won't change
         (expr, self.counter.load(Ordering::Relaxed))
     }
 

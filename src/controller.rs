@@ -65,12 +65,15 @@ impl Controller {
                 .full_screen(),
         );
         siv.add_global_callback('x', |siv| {
-            let view = siv.find_name::<views::SourceView>("source_view").unwrap();
+            let mut view = siv.find_name::<views::SourceView>("source_view").unwrap();
             let line = view.row().unwrap() as u32 + 1;
             let controller = siv.user_data::<Controller>().unwrap();
             // We want to toggle tracing at this line - try to remove if it
             // exists, otherwise proceed to add callsite.
             if controller.trace_stack.remove_callsite(line) {
+                let item = view.borrow_items_mut().get_mut(line as usize - 1).unwrap();
+                item.latency = None;
+                item.frequency = None;
                 return;
             }
 
