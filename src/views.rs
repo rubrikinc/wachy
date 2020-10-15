@@ -56,7 +56,7 @@ mod source_view {
 
             for (i, label) in labels.iter().enumerate() {
                 if value < 1000.0 {
-                    if i == 0 {
+                    if value == 0.0 {
                         return format!("{}{}", value, label);
                     } else {
                         return format!("{:.*}{}", n_decimals(value), value, label);
@@ -87,6 +87,16 @@ mod source_view {
 
         fn cmp(&self, other: &Self, _column: Column) -> core::cmp::Ordering {
             self.line_number.cmp(&other.line_number)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_formatting() {
+            assert_eq!(Item::format(0.02934924, Item::FREQUENCY_LABELS), "0.03/ms");
         }
     }
 }
@@ -188,6 +198,13 @@ where
     Dialog::around(LinearLayout::vertical().child(edit_view).child(select_view))
         .title(title)
         .fixed_width(SEARCH_VIEW_WIDTH)
+}
+
+/// Simple dialog with single confirmation button that closes it
+pub fn new_dialog(text: &str) -> Dialog {
+    Dialog::text(text).button("OK", |siv| {
+        siv.pop_layer();
+    })
 }
 
 #[cfg(test)]

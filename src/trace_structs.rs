@@ -155,6 +155,11 @@ impl TraceStack {
         }
     }
 
+    pub fn get_current_function(&self) -> FunctionName {
+        let guard = self.stack.lock().unwrap();
+        guard.frames.last().unwrap().function
+    }
+
     pub fn get_callsites(&self, line: u32) -> Vec<CallInstruction> {
         let guard = self.stack.lock().unwrap();
         let callsites = guard

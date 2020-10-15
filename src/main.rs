@@ -32,6 +32,7 @@ fn main() {
         }
 
         let mut args = env::args().skip(1);
+        // TODO make absolute
         let file_path = args.next().unwrap();
         let function_name = args.next().unwrap();
 

@@ -67,17 +67,17 @@ impl Controller {
         siv.add_global_callback('x', |siv| {
             let mut view = siv.find_name::<views::SourceView>("source_view").unwrap();
             let line = view.row().unwrap() as u32 + 1;
-            let controller = siv.user_data::<Controller>().unwrap();
+            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
             // We want to toggle tracing at this line - try to remove if it
             // exists, otherwise proceed to add callsite.
-            if controller.trace_stack.remove_callsite(line) {
+            if trace_stack.remove_callsite(line) {
                 let item = view.borrow_items_mut().get_mut(line as usize - 1).unwrap();
                 item.latency = None;
                 item.frequency = None;
                 return;
             }
 
-            let callsites = controller.trace_stack.get_callsites(line);
+            let callsites = trace_stack.get_callsites(line);
             if !callsites.is_empty() {
                 if callsites.len() > 1 {
                     siv.add_layer(views::new_search_view(
@@ -89,12 +89,14 @@ impl Controller {
                         },
                     ));
                 } else {
-                    controller
-                        .trace_stack
-                        .add_callsite(line, callsites.into_iter().nth(0).unwrap());
+                    trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
                 }
             } else {
-                // TODO show error
+                let function = trace_stack.get_current_function();
+                siv.add_layer(views::new_dialog(&format!(
+                    "No calls found in {} on line {}. Note the call may have been inlined.",
+                    function, line
+                )));
             }
         });
 
