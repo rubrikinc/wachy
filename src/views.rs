@@ -8,7 +8,15 @@ use itertools::Itertools;
 use std::borrow::Borrow;
 use std::rc::Rc;
 
+#[derive(Clone, Copy, Debug)]
+pub enum TraceState<T> {
+    Untraced,
+    Pending,
+    Traced(T),
+}
+
 mod source_view {
+    use super::TraceState;
     use std::time::Duration;
 
     pub const CALL_ANNOTATION_LEN: usize = 2;
@@ -23,9 +31,9 @@ mod source_view {
 
     #[derive(Clone, Debug)]
     pub struct Item {
-        pub latency: Option<Duration>,
+        pub latency: TraceState<Duration>,
         /// Frequency per second
-        pub frequency: Option<f32>,
+        pub frequency: TraceState<f32>,
         pub line_number: u32,
         pub line: String,
         pub highlighted: bool,
@@ -36,15 +44,22 @@ mod source_view {
         const SIGNIFICANT_FIGURES: usize = 3;
         const LATENCY_LABELS: &'static [&'static str] = &["ns", "us", "ms", "s"];
         const FREQUENCY_LABELS: &'static [&'static str] = &["/ms", "/s", "K/s", "M/s"];
+        const PENDING_STR: &'static str = "  ---";
 
-        fn format_latency(&self) -> Option<String> {
-            self.latency
-                .map(|l| Self::format(l.as_nanos() as f64, Self::LATENCY_LABELS))
+        fn format_latency(&self) -> String {
+            match self.latency {
+                TraceState::Traced(l) => Self::format(l.as_nanos() as f64, Self::LATENCY_LABELS),
+                TraceState::Pending => Self::PENDING_STR.into(),
+                TraceState::Untraced => String::new(),
+            }
         }
 
-        fn format_frequency(&self) -> Option<String> {
-            self.frequency
-                .map(|f| Self::format(f as f64 * 1000.0, Self::FREQUENCY_LABELS))
+        fn format_frequency(&self) -> String {
+            match self.frequency {
+                TraceState::Traced(f) => Self::format(f as f64 * 1000.0, Self::FREQUENCY_LABELS),
+                TraceState::Pending => Self::PENDING_STR.into(),
+                TraceState::Untraced => String::new(),
+            }
         }
 
         /// Given labels representing increasing order of magniture values, format
@@ -74,12 +89,12 @@ mod source_view {
     impl cursive_table_view::TableViewItem<Column> for Item {
         fn to_column(&self, column: Column) -> String {
             match column {
-                Column::Latency => self.format_latency().unwrap_or_else(String::new),
-                Column::Frequency => self.format_frequency().unwrap_or_else(String::new),
+                Column::Latency => self.format_latency(),
+                Column::Frequency => self.format_frequency(),
                 Column::LineNumber => {
-                    let call_annotation = if self.highlighted { "▶ " } else { "  " };
+                    let call_annotation = if self.highlighted { " ▶" } else { "  " };
                     assert_eq!(call_annotation.chars().count(), CALL_ANNOTATION_LEN);
-                    format!("{}{}", call_annotation, self.line_number)
+                    format!("{}{}", self.line_number, call_annotation)
                 }
                 Column::Line => self.line.clone(),
             }
@@ -124,12 +139,23 @@ pub fn new_source_view(
     let mut items: Vec<Item> = source
         .into_iter()
         .enumerate()
-        .map(|(i, line)| Item {
-            latency: None,
-            frequency: None,
-            line_number: i as u32 + 1,
-            line,
-            highlighted: false,
+        .map(|(i, line)| {
+            let pending = i as u32 == selected_line - 1;
+            Item {
+                latency: if pending {
+                    TraceState::Pending
+                } else {
+                    TraceState::Untraced
+                },
+                frequency: if pending {
+                    TraceState::Pending
+                } else {
+                    TraceState::Untraced
+                },
+                line_number: i as u32 + 1,
+                line,
+                highlighted: false,
+            }
         })
         .collect();
     for line in highlighted_lines {

@@ -3,6 +3,7 @@ use crate::program::{FunctionName, Program};
 use crate::trace_structs::{CallInstruction, FrameInfo, TraceStack};
 use crate::tracer::{TraceData, Tracer};
 use crate::views;
+use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
 use std::collections::HashMap;
@@ -65,15 +66,18 @@ impl Controller {
                 .full_screen(),
         );
         siv.add_global_callback('x', |siv| {
-            let mut view = siv.find_name::<views::SourceView>("source_view").unwrap();
-            let line = view.row().unwrap() as u32 + 1;
+            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+            let line = sview.row().unwrap() as u32 + 1;
             let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
             // We want to toggle tracing at this line - try to remove if it
             // exists, otherwise proceed to add callsite.
             if trace_stack.remove_callsite(line) {
-                let item = view.borrow_items_mut().get_mut(line as usize - 1).unwrap();
-                item.latency = None;
-                item.frequency = None;
+                Self::set_line_state(
+                    &mut *sview,
+                    line,
+                    TraceState::Untraced,
+                    TraceState::Untraced,
+                );
                 return;
             }
 
@@ -84,11 +88,25 @@ impl Controller {
                         "Select the call to trace",
                         callsites,
                         move |siv: &mut Cursive, ci: &CallInstruction| {
+                            let mut sview =
+                                siv.find_name::<views::SourceView>("source_view").unwrap();
+                            Self::set_line_state(
+                                &mut *sview,
+                                line,
+                                TraceState::Pending,
+                                TraceState::Pending,
+                            );
                             let controller = siv.user_data::<Controller>().unwrap();
                             controller.trace_stack.add_callsite(line, ci.clone());
                         },
                     ));
                 } else {
+                    Self::set_line_state(
+                        &mut *sview,
+                        line,
+                        TraceState::Pending,
+                        TraceState::Pending,
+                    );
                     trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
                 }
             } else {
@@ -149,15 +167,16 @@ impl Controller {
                 {
                     return Ok(());
                 }
-                siv.call_on_name("source_view", |table: &mut views::SourceView| {
-                    let items = table.borrow_items_mut();
+                siv.call_on_name("source_view", |sview: &mut views::SourceView| {
                     for (line, info) in data.traces {
-                        // TODO check for err
-                        let item = items.get_mut(line as usize - 1).unwrap();
-                        if info.count != 0 {
-                            item.latency = Some(info.duration / u32::try_from(info.count).unwrap());
-                        }
-                        item.frequency = Some(info.count as f32 / data.time.as_secs_f32());
+                        let latency = if info.count != 0 {
+                            TraceState::Traced(info.duration / u32::try_from(info.count).unwrap())
+                        } else {
+                            TraceState::Untraced
+                        };
+                        let frequency =
+                            TraceState::Traced(info.count as f32 / data.time.as_secs_f32());
+                        Self::set_line_state(sview, line, latency, frequency);
                     }
                 });
                 siv.refresh();
@@ -214,5 +233,16 @@ impl Controller {
         log::trace!("{:?}", line_to_callsites);
 
         FrameInfo::new(function, source_file, source_line, line_to_callsites)
+    }
+
+    fn set_line_state(
+        sview: &mut views::SourceView,
+        line: u32,
+        latency: TraceState<std::time::Duration>,
+        frequency: TraceState<f32>,
+    ) {
+        let item = sview.borrow_items_mut().get_mut(line as usize - 1).unwrap();
+        item.latency = latency;
+        item.frequency = frequency;
     }
 }
