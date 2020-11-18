@@ -2,6 +2,7 @@ use crate::error::Error;
 use addr2line::Location;
 use object::Object;
 use object::ObjectSection;
+use object::ObjectSymbol;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -33,7 +34,9 @@ pub struct Program {
 struct SymbolInfo {
     name: FunctionName,
     demangled_name: Option<String>,
-    symbol: object::read::Symbol<'static>,
+    section_index: Option<object::SectionIndex>,
+    address: u64,
+    size: u64,
 }
 
 impl SymbolInfo {
@@ -79,14 +82,16 @@ impl Program {
 
         let function_names: Vec<SymbolInfo> = file
             .symbols()
-            .filter(|(_, symbol)| symbol.kind() == object::SymbolKind::Text) // Filter to functions
-            .map(|(_, symbol)| {
+            .filter(|symbol| symbol.kind() == object::SymbolKind::Text) // Filter to functions
+            .map(|symbol| {
                 symbol.name().map(|name| {
                     let demangled_name = cplus_demangle::demangle(name).ok();
                     SymbolInfo {
                         name: FunctionName(name),
                         demangled_name,
-                        symbol,
+                        section_index: symbol.section_index(),
+                        address: symbol.address(),
+                        size: symbol.size(),
                     }
                 })
             })
@@ -103,8 +108,8 @@ impl Program {
 
         let address_to_name: HashMap<_, _> = name_to_symbol
             .iter()
-            .filter(|(_, s)| s.symbol.address() != 0)
-            .map(|(n, s)| (s.symbol.address(), n.clone()))
+            .filter(|(_, s)| s.address != 0)
+            .map(|(n, s)| (s.address, n.clone()))
             .collect();
 
         let context = new_context(&file).unwrap();
@@ -134,7 +139,7 @@ impl Program {
     }
 
     pub fn get_address(&self, function: FunctionName) -> u64 {
-        self.name_to_symbol.get(&function).unwrap().symbol.address()
+        self.name_to_symbol.get(&function).unwrap().address
     }
 
     pub fn get_location(&self, address: u64) -> Option<Location> {
@@ -146,17 +151,24 @@ impl Program {
 
     // Returns (address, data) for given function
     pub fn get_data(&self, function: FunctionName) -> Result<(u64, &[u8]), Error> {
-        let symbol = &self.name_to_symbol.get(&function).unwrap().symbol;
-        let address = symbol.address();
+        let symbol = &self.name_to_symbol.get(&function).unwrap();
+        let address = symbol.address;
         if address == 0 {
             return Err(
                 format!("Cannot get data for dynamically linked symbol {}", function).into(),
             );
         }
-        self.file
-            .symbol_data(symbol)
-            .map_err(|err| format!("Error getting data for function {}: {}", function, err).into())
-            .map(|data| (address, data.unwrap()))
+        let size = symbol.size;
+        let index = symbol.section_index.unwrap();
+        Ok((
+            address,
+            self.file
+                .section_by_index(index)
+                .unwrap()
+                .data_range(address, size)
+                .unwrap()
+                .unwrap(),
+        ))
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {
@@ -168,7 +180,7 @@ impl Program {
     }
 }
 
-/// Clone of addr2line::ObjectContext, just using Arc instead of Rc.
+/// Clone of addr2line::ObjectContext::new, just using Arc instead of Rc.
 ///
 /// Construct a new `Context`.
 ///
@@ -178,7 +190,7 @@ impl Program {
 ///
 /// Performance sensitive applications may want to use `Context::from_sections`
 /// with a more specialised `gimli::Reader` implementation.
-pub fn new_context<'data, 'file, O: object::Object<'data, 'file>>(
+pub fn new_context<'data: 'file, 'file, O: object::Object<'data, 'file>>(
     file: &'file O,
 ) -> Result<addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>, gimli::Error> {
     let endian = if file.is_little_endian() {
@@ -187,7 +199,7 @@ pub fn new_context<'data, 'file, O: object::Object<'data, 'file>>(
         gimli::RunTimeEndian::Big
     };
 
-    fn load_section<'data, 'file, O, S, Endian>(file: &'file O, endian: Endian) -> S
+    fn load_section<'data: 'file, 'file, O, S, Endian>(file: &'file O, endian: Endian) -> S
     where
         O: object::Object<'data, 'file>,
         S: gimli::Section<gimli::EndianArcSlice<Endian>>,
