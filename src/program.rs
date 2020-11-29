@@ -3,10 +3,17 @@ use addr2line::Location;
 use object::Object;
 use object::ObjectSection;
 use object::ObjectSymbol;
+use object::ObjectSymbolTable;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use zydis::ffi::Decoder;
+use zydis::formatter::{Formatter, OutputBuffer};
+use zydis::{
+    enums::generated::{AddressWidth, FormatterStyle, MachineMode, Mnemonic},
+    DecodedInstruction,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 /// Name corresponding to a function symbol that exists in the program
@@ -28,6 +35,7 @@ pub struct Program {
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
     dynamic_symbols_range: std::ops::Range<u64>,
+    dynamic_symbols_map: HashMap<u64, FunctionName>,
 }
 
 #[derive(Debug)]
@@ -58,10 +66,10 @@ impl Program {
             Ok(mmap) => mmap,
             Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
         };
-        // Yeah yeah this is a terrible thing to do. I couldn't find any way at
-        // all to propagate appropriate lifetimes into cursive (if you know a
-        // way let me know), so it's either making this mmap static or some
-        // other struct, and doing it here simplifies LOTS of annotations.
+        // Yeah yeah this is a terrible thing to do. I couldn't find any way to
+        // propagate appropriate lifetimes into cursive (if you know a way let
+        // me know), so it's either making this mmap static or some other
+        // struct, and doing it here simplifies LOTS of annotations.
         let mmap = Box::leak(Box::new(mmap));
 
         let file = match object::File::parse(&*mmap) {
@@ -101,6 +109,8 @@ impl Program {
             })
             .collect();
 
+        let dynamic_symbols_map = Program::dynamic_symbols_map(&file);
+
         // Note: reversing this map can create collisions.
         // https://stackoverflow.com/questions/49824915/ambiguity-of-de-mangled-c-symbols
         let name_to_symbol: HashMap<_, _> =
@@ -121,7 +131,51 @@ impl Program {
             address_to_name,
             context,
             dynamic_symbols_range,
+            dynamic_symbols_map,
         })
+    }
+
+    fn dynamic_symbols_map(file: &object::read::File<'static>) -> HashMap<u64, FunctionName> {
+        let mut relocations = HashMap::new();
+        let dynamic_symbols = file.dynamic_symbol_table().unwrap();
+        let reloc_iter = file.dynamic_relocations().unwrap();
+        for (address, relocation) in reloc_iter {
+            if let object::RelocationTarget::Symbol(index) = relocation.target() {
+                let symbol = dynamic_symbols.symbol_by_index(index).unwrap();
+                if symbol.kind() == object::SymbolKind::Text {
+                    if let Ok(name) = symbol.name() {
+                        log::trace!("Relocation {:x} = {}", address, name);
+                        relocations.insert(address, name);
+                    }
+                }
+            }
+        }
+
+        let mut map = HashMap::new();
+        let decoder = create_decoder();
+        for section in file.sections() {
+            if let (Ok(name), address) = (section.name(), section.address()) {
+                // Include .plt and .plt.got
+                if name.starts_with(".plt") {
+                    let code = section.uncompressed_data().unwrap();
+                    for (instruction, ip) in
+                        get_instructions_with_mnemonic(&decoder, address, &code, Mnemonic::JMP)
+                    {
+                        let jump_address = instruction
+                            .calc_absolute_address(ip, &instruction.operands[0])
+                            .unwrap();
+                        log::trace!("PLT {:#x?} -> GOT {:#x?}", ip, jump_address);
+                        // Ignore expected jumps to PLT0 - figure A-9 in
+                        // https://refspecs.linuxfoundation.org/elf/elf.pdf
+                        if let Some(name) = relocations.get(&jump_address) {
+                            map.insert(ip, FunctionName(*name));
+                        }
+                    }
+                }
+            }
+        }
+        log::trace!("{:?}", map);
+        map
     }
 
     pub fn get_matches(&self, function_name: &str) -> Vec<FunctionName> {
@@ -177,6 +231,51 @@ impl Program {
 
     pub fn is_dynamic_symbol(&self, address: u64) -> bool {
         return self.dynamic_symbols_range.contains(&address);
+    }
+}
+
+pub fn create_decoder() -> Decoder {
+    // TODO make platform independent
+    Decoder::new(MachineMode::LONG_64, AddressWidth::_64).unwrap()
+}
+
+pub fn get_instructions_with_mnemonic<'a, 'b>(
+    decoder: &'a Decoder,
+    start_address: u64,
+    code: &'b [u8],
+    mnemonic: Mnemonic,
+) -> CallIterator<'a, 'b> {
+    CallIterator {
+        it: decoder.instruction_iterator(code, start_address),
+        mnemonic,
+    }
+}
+
+pub struct CallIterator<'a, 'b> {
+    it: zydis::InstructionIterator<'a, 'b>,
+    mnemonic: Mnemonic,
+}
+
+impl Iterator for CallIterator<'_, '_> {
+    type Item = (DecodedInstruction, u64);
+
+    fn next(&mut self) -> Option<(DecodedInstruction, u64)> {
+        while let Some((instruction, ip)) = self.it.next() {
+            if instruction.mnemonic == self.mnemonic {
+                if log::log_enabled!(log::Level::Trace) {
+                    let formatter = Formatter::new(FormatterStyle::INTEL).unwrap();
+                    let mut buffer = [0u8; 200];
+                    let mut buffer = OutputBuffer::new(&mut buffer[..]);
+                    formatter
+                        .format_instruction(&instruction, &mut buffer, Some(ip), None)
+                        .unwrap();
+                    log::trace!("{} 0x{:016X} {}", instruction.operand_count, ip, buffer);
+                }
+
+                return Some((instruction, ip));
+            }
+        }
+        None
     }
 }
 
