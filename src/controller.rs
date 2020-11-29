@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::program;
 use crate::program::{FunctionName, Program};
 use crate::trace_structs::{CallInstruction, FrameInfo, TraceStack};
 use crate::tracer::{TraceData, Tracer};
@@ -192,42 +193,31 @@ impl Controller {
         source_line: u32,
     ) -> FrameInfo {
         let (start_address, code) = program.get_data(function).unwrap();
-        let formatter = Formatter::new(FormatterStyle::INTEL).unwrap();
-        let decoder = Decoder::new(MachineMode::LONG_64, AddressWidth::_64).unwrap();
-        let mut buffer = [0u8; 200];
-        let mut buffer = OutputBuffer::new(&mut buffer[..]);
+        let decoder = program::create_decoder();
 
         let mut line_to_callsites = HashMap::<u32, Vec<CallInstruction>>::new();
 
-        // 0 is the address for our code.
-        for (instruction, ip) in decoder.instruction_iterator(code, start_address) {
-            if instruction.mnemonic == Mnemonic::CALL {
-                if log::log_enabled!(log::Level::Trace) {
-                    formatter
-                        .format_instruction(&instruction, &mut buffer, Some(ip), None)
-                        .unwrap();
-                    log::trace!("{} 0x{:016X} {}", instruction.operand_count, ip, buffer);
-                }
-
-                assert!(instruction.operand_count > 0);
-                let relative_ip = u32::try_from(ip - start_address).unwrap();
-                let call_address = instruction
-                    .calc_absolute_address(ip, &instruction.operands[0])
-                    .unwrap();
-                // TODO handle register
-                let callsite = if program.is_dynamic_symbol(call_address) {
-                    CallInstruction::dynamic_symbol(relative_ip, instruction.length, call_address)
-                } else {
-                    let function = program.get_function_for_address(call_address).unwrap();
-                    CallInstruction::function(relative_ip, instruction.length, function)
-                };
-                let location = program.get_location(ip).unwrap();
-                assert!(location.file.unwrap() == source_file);
-                line_to_callsites
-                    .entry(location.line.unwrap())
-                    .or_default()
-                    .push(callsite);
-            }
+        for (instruction, ip) in
+            program::get_instructions_with_mnemonic(&decoder, start_address, code, Mnemonic::CALL)
+        {
+            assert!(instruction.operand_count > 0);
+            let relative_ip = u32::try_from(ip - start_address).unwrap();
+            let call_address = instruction
+                .calc_absolute_address(ip, &instruction.operands[0])
+                .unwrap();
+            // TODO handle register
+            let callsite = if program.is_dynamic_symbol(call_address) {
+                CallInstruction::dynamic_symbol(relative_ip, instruction.length, call_address)
+            } else {
+                let function = program.get_function_for_address(call_address).unwrap();
+                CallInstruction::function(relative_ip, instruction.length, function)
+            };
+            let location = program.get_location(ip).unwrap();
+            assert!(location.file.unwrap() == source_file);
+            line_to_callsites
+                .entry(location.line.unwrap())
+                .or_default()
+                .push(callsite);
         }
 
         log::trace!("{:?}", line_to_callsites);

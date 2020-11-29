@@ -161,6 +161,7 @@ impl Program {
                     for (instruction, ip) in
                         get_instructions_with_mnemonic(&decoder, address, &code, Mnemonic::JMP)
                     {
+                        assert!(instruction.operand_count > 0);
                         let jump_address = instruction
                             .calc_absolute_address(ip, &instruction.operands[0])
                             .unwrap();
