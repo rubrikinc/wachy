@@ -49,19 +49,24 @@ pub struct FrameInfo {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InstructionType {
+    /// Address of dynamic symbol
+    DynamicSymbol(u64),
+    /// Function being called, if it's a hardcoded function
+    Function(FunctionName),
+    /// Register being called. Note: must be a bpftrace register
+    /// https://github.com/iovisor/bpftrace/blob/master/src/arch/x86_64.cpp,
+    /// which notably does not have E or R prefixes.
+    Register(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallInstruction {
     /// IP of call instruction, relative to start of function
     relative_ip: u32,
     /// Size of instruction
     length: u8,
-    /// Address of dynamic symbol
-    dynamic_symbol_address: Option<u64>,
-    /// Function being called, if it's a hardcoded function
-    function: Option<FunctionName>,
-    /// Register being called. Note: must be a bpftrace register
-    /// https://github.com/iovisor/bpftrace/blob/master/src/arch/x86_64.cpp,
-    /// which notably does not have E or R prefixes.
-    register: Option<String>,
+    pub instruction: InstructionType,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -98,9 +103,7 @@ impl CallInstruction {
         CallInstruction {
             relative_ip,
             length,
-            dynamic_symbol_address: Some(address),
-            function: None,
-            register: None,
+            instruction: InstructionType::DynamicSymbol(address),
         }
     }
 
@@ -108,9 +111,7 @@ impl CallInstruction {
         CallInstruction {
             relative_ip,
             length,
-            dynamic_symbol_address: None,
-            function: Some(function),
-            register: None,
+            instruction: InstructionType::Function(function),
         }
     }
 
@@ -118,9 +119,7 @@ impl CallInstruction {
         CallInstruction {
             relative_ip,
             length,
-            dynamic_symbol_address: None,
-            function: None,
-            register: Some(register),
+            instruction: InstructionType::Register(register),
         }
     }
 }
@@ -128,15 +127,13 @@ impl CallInstruction {
 impl From<CallInstruction> for String {
     fn from(c: CallInstruction) -> Self {
         let mut out = format!("{}: ", c.relative_ip);
-        if let Some(addr) = c.dynamic_symbol_address {
-            // TODO get symbol name
-            out += &addr.to_string();
-        }
-        if let Some(function) = c.function {
-            out += function.0;
-        }
-        if let Some(register) = c.register {
-            out += &register;
+        match c.instruction {
+            InstructionType::DynamicSymbol(addr) => {
+                // TODO get symbol name
+                out += &addr.to_string();
+            }
+            InstructionType::Function(function) => out += function.0,
+            InstructionType::Register(register) => out += &register,
         }
         out
     }
@@ -198,6 +195,13 @@ impl TraceStack {
         } else {
             false
         }
+    }
+
+    pub fn push(&self, frame: FrameInfo) {
+        let mut guard = self.stack.lock().unwrap();
+        guard.frames.push(frame);
+        self.counter.fetch_add(1, Ordering::Release);
+        guard.tx.send(()).unwrap();
     }
 
     /// Get appropriate bpftrace expression for current state, along with

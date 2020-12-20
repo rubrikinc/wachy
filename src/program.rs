@@ -197,9 +197,18 @@ impl Program {
         self.name_to_symbol.get(&function).unwrap().address
     }
 
+    /// If something is returned, it is guaranteed to have file and line number
+    /// set.
     pub fn get_location(&self, address: u64) -> Option<Location> {
         match self.context.find_location(address) {
-            Ok(l) => l,
+            Ok(l) => match l {
+                Some(l) => {
+                    l.file?;
+                    l.line?;
+                    Some(l)
+                }
+                None => None,
+            },
             Err(_) => None,
         }
     }

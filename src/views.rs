@@ -19,6 +19,7 @@ mod source_view {
     use super::TraceState;
     use std::time::Duration;
 
+    pub const LINE_NUMBER_LEN: usize = 4;
     pub const CALL_ANNOTATION_LEN: usize = 2;
 
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -36,7 +37,7 @@ mod source_view {
         pub frequency: TraceState<f32>,
         pub line_number: u32,
         pub line: String,
-        pub highlighted: bool,
+        pub marked: bool,
     }
 
     impl Item {
@@ -92,7 +93,7 @@ mod source_view {
                 Column::Latency => self.format_latency(),
                 Column::Frequency => self.format_frequency(),
                 Column::LineNumber => {
-                    let call_annotation = if self.highlighted { " ▶" } else { "  " };
+                    let call_annotation = if self.marked { " ▶" } else { "  " };
                     assert_eq!(call_annotation.chars().count(), CALL_ANNOTATION_LEN);
                     format!("{}{}", self.line_number, call_annotation)
                 }
@@ -119,16 +120,10 @@ mod source_view {
 pub type SourceView = cursive_table_view::TableView<source_view::Item, source_view::Column>;
 
 /// View to display source code files with inline tracing info.
-pub fn new_source_view(
-    source: Vec<String>,
-    selected_line: u32,
-    highlighted_lines: Vec<u32>,
-) -> SourceView {
+pub fn new_source_view() -> SourceView {
     use source_view::Column;
-    use source_view::Item;
-    let line_num_width =
-        (source.len() as f32).log10().ceil() as usize + source_view::CALL_ANNOTATION_LEN + 1;
-    let mut table = cursive_table_view::TableView::<Item, Column>::new()
+    let line_num_width = source_view::LINE_NUMBER_LEN + source_view::CALL_ANNOTATION_LEN + 1;
+    let mut table = cursive_table_view::TableView::<source_view::Item, Column>::new()
         .column(Column::Latency, "Duration", |c| c.width(8))
         .column(Column::Frequency, "Frequency", |c| c.width(8))
         .column(Column::LineNumber, "", |c| {
@@ -136,7 +131,17 @@ pub fn new_source_view(
         })
         .column(Column::Line, "", |c| c);
     table.sort_by(Column::LineNumber, Ordering::Less);
-    let mut items: Vec<Item> = source
+    table
+}
+
+pub fn set_source_view(
+    sview: &mut SourceView,
+    source_code: Vec<String>,
+    selected_line: u32,
+    marked_lines: Vec<u32>,
+) {
+    use source_view::Item;
+    let mut items: Vec<Item> = source_code
         .into_iter()
         .enumerate()
         .map(|(i, line)| {
@@ -154,15 +159,15 @@ pub fn new_source_view(
                 },
                 line_number: i as u32 + 1,
                 line,
-                highlighted: false,
+                marked: false,
             }
         })
         .collect();
-    for line in highlighted_lines {
-        items.get_mut(line as usize - 1).unwrap().highlighted = true;
+    for line in marked_lines {
+        items.get_mut(line as usize - 1).unwrap().marked = true;
     }
-    table = table.items(items).selected_row(selected_line as usize - 1);
-    table
+    sview.set_items(items);
+    sview.set_selected_row(selected_line as usize - 1);
 }
 
 pub type SearchView = ResizedView<Dialog>;

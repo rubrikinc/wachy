@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::program;
 use crate::program::{FunctionName, Program};
-use crate::trace_structs::{CallInstruction, FrameInfo, TraceStack};
+use crate::trace_structs::{CallInstruction, FrameInfo, InstructionType, TraceStack};
 use crate::tracer::{TraceData, Tracer};
 use crate::views;
 use crate::views::TraceState;
@@ -26,23 +26,10 @@ impl Controller {
         let matches = program.get_matches(function_name);
         // TODO ensure one and only one match
         let function = matches.into_iter().next().unwrap();
-        let location = program.get_location(program.get_address(function)).unwrap();
-        let source_file = location.file.ok_or(format!("Failed to get source file name corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
-        let source_line = location.line.ok_or(format!("Failed to get source file line number corresponding to function {}, please ensure {} has debugging symbols", function_name, program.file_path))?;
-        log::info!(
-            "Function {} is at {}:{}",
-            function_name,
-            source_file,
-            source_line
-        );
 
-        let frame_info = Controller::create_frame_info(
-            &program,
-            function,
-            String::from(source_file),
-            source_line,
-        );
-        let call_lines = frame_info.called_lines();
+        let mut sview = views::new_source_view();
+        let frame_info = Controller::setup_function(&program, function, &mut sview)?;
+
         let (stack_tx, stack_rx) = mpsc::channel();
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
@@ -52,17 +39,9 @@ impl Controller {
         let (trace_tx, trace_rx) = mpsc::channel();
         let tracer = Tracer::new(Arc::clone(&trace_stack), trace_tx)?;
 
-        // TODO cache file contents
-        let file = std::fs::File::open(source_file).unwrap();
-        let source_code: Vec<String> = std::io::BufReader::new(file)
-            .lines()
-            .map(|l| l.unwrap())
-            .collect();
-
-        let source_view = views::new_source_view(source_code, source_line, call_lines);
         let mut siv = cursive::default();
         siv.add_layer(
-            cursive::views::Dialog::around(source_view.with_name("source_view"))
+            cursive::views::Dialog::around(sview.with_name("source_view"))
                 .title(format!("wachy | {}", program.file_path))
                 .full_screen(),
         );
@@ -83,41 +62,93 @@ impl Controller {
             }
 
             let callsites = trace_stack.get_callsites(line);
-            if !callsites.is_empty() {
-                if callsites.len() > 1 {
-                    siv.add_layer(views::new_search_view(
-                        "Select the call to trace",
-                        callsites,
-                        move |siv: &mut Cursive, ci: &CallInstruction| {
-                            let mut sview =
-                                siv.find_name::<views::SourceView>("source_view").unwrap();
-                            Self::set_line_state(
-                                &mut *sview,
-                                line,
-                                TraceState::Pending,
-                                TraceState::Pending,
-                            );
-                            let controller = siv.user_data::<Controller>().unwrap();
-                            controller.trace_stack.add_callsite(line, ci.clone());
-                        },
-                    ));
-                } else {
-                    Self::set_line_state(
-                        &mut *sview,
-                        line,
-                        TraceState::Pending,
-                        TraceState::Pending,
-                    );
-                    trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
-                }
-            } else {
+            if callsites.is_empty() {
                 let function = trace_stack.get_current_function();
                 siv.add_layer(views::new_dialog(&format!(
                     "No calls found in {} on line {}. Note the call may have been inlined.",
                     function, line
                 )));
+                return;
+            }
+            if callsites.len() > 1 {
+                siv.add_layer(views::new_search_view(
+                    "Select the call to trace",
+                    callsites,
+                    move |siv: &mut Cursive, ci: &CallInstruction| {
+                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        Self::set_line_state(
+                            &mut *sview,
+                            line,
+                            TraceState::Pending,
+                            TraceState::Pending,
+                        );
+                        let controller = siv.user_data::<Controller>().unwrap();
+                        controller.trace_stack.add_callsite(line, ci.clone());
+                    },
+                ));
+            } else {
+                Self::set_line_state(&mut *sview, line, TraceState::Pending, TraceState::Pending);
+                trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
             }
         });
+
+        siv.add_global_callback(
+            cursive::event::Event::Key(cursive::event::Key::Enter),
+            |siv| {
+                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let line = sview.row().unwrap() as u32 + 1;
+                let controller = &siv.user_data::<Controller>().unwrap();
+                let trace_stack = &controller.trace_stack;
+                let callsites = trace_stack.get_callsites(line);
+                if callsites.is_empty() {
+                    let function = trace_stack.get_current_function();
+                    siv.add_layer(views::new_dialog(&format!(
+                        "No calls found in {} on line {}. Note the call may have been inlined.",
+                        function, line
+                    )));
+                    return;
+                }
+
+                // TODO allow entering any fn if dynamic call
+                let has_dynamic_calls = callsites.iter().any(|ci| {
+                    if let InstructionType::DynamicSymbol(_) = ci.instruction {
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                if callsites.len() > 1 {
+                    // TODO we should be searching functions not callsites
+                    siv.add_layer(views::new_search_view(
+                        "Select the call to enter",
+                        callsites,
+                        move |siv: &mut Cursive, ci: &CallInstruction| {
+                            if let InstructionType::Function(function) = ci.instruction {
+                                let mut sview =
+                                    siv.find_name::<views::SourceView>("source_view").unwrap();
+                                let controller = siv.user_data::<Controller>().unwrap();
+                                // TODO don't expect
+                                let frame_info = Controller::setup_function(
+                                    &controller.program,
+                                    function,
+                                    &mut *sview,
+                                )
+                                .expect(&format!("Error setting up function {}", function));
+                                controller.trace_stack.push(frame_info);
+                            }
+                        },
+                    ));
+                } else {
+                    if let InstructionType::Function(function) = callsites[0].instruction {
+                        let frame_info =
+                            Controller::setup_function(&controller.program, function, &mut *sview)
+                                .expect(&format!("Error setting up function {}", function));
+                        trace_stack.push(frame_info);
+                    }
+                }
+            },
+        );
 
         let controller = Controller {
             program,
@@ -186,12 +217,21 @@ impl Controller {
         }
     }
 
-    fn create_frame_info(
+    fn setup_function(
         program: &Program,
         function: FunctionName,
-        source_file: String,
-        source_line: u32,
-    ) -> FrameInfo {
+        sview: &mut views::SourceView,
+    ) -> Result<FrameInfo, Error> {
+        let location = program.get_location(program.get_address(function)).ok_or(format!("Failed to get source information corresponding to function {}, please ensure {} has debugging symbols", function, program.file_path))?;
+        let source_file = location.file.unwrap();
+        let source_line = location.line.unwrap();
+        log::info!(
+            "Function {} is at {}:{}",
+            function,
+            source_file,
+            source_line
+        );
+
         let (start_address, code) = program.get_data(function).unwrap();
         let decoder = program::create_decoder();
 
@@ -221,8 +261,22 @@ impl Controller {
         }
 
         log::trace!("{:?}", line_to_callsites);
+        let frame_info = FrameInfo::new(
+            function,
+            String::from(source_file),
+            source_line,
+            line_to_callsites,
+        );
 
-        FrameInfo::new(function, source_file, source_line, line_to_callsites)
+        // TODO cache file contents
+        let file = std::fs::File::open(source_file).unwrap();
+        let source_code: Vec<String> = std::io::BufReader::new(file)
+            .lines()
+            .map(|l| l.unwrap())
+            .collect();
+        views::set_source_view(sview, source_code, source_line, frame_info.called_lines());
+
+        Ok(frame_info)
     }
 
     fn set_line_state(
