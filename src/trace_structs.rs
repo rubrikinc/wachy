@@ -50,8 +50,8 @@ pub struct FrameInfo {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstructionType {
-    /// Address of dynamic symbol
-    DynamicSymbol(u64),
+    /// Dynamic symbol
+    DynamicSymbol(FunctionName),
     /// Function being called, if it's a hardcoded function
     Function(FunctionName),
     /// Register being called. Note: must be a bpftrace register
@@ -99,11 +99,11 @@ impl FrameInfo {
 }
 
 impl CallInstruction {
-    pub fn dynamic_symbol(relative_ip: u32, length: u8, address: u64) -> CallInstruction {
+    pub fn dynamic_symbol(relative_ip: u32, length: u8, function: FunctionName) -> CallInstruction {
         CallInstruction {
             relative_ip,
             length,
-            instruction: InstructionType::DynamicSymbol(address),
+            instruction: InstructionType::DynamicSymbol(function),
         }
     }
 
@@ -129,8 +129,7 @@ impl From<CallInstruction> for String {
         let mut out = format!("{}: ", c.relative_ip);
         match c.instruction {
             InstructionType::DynamicSymbol(addr) => {
-                // TODO get symbol name
-                out += &addr.to_string();
+                out += &addr.pretty_print();
             }
             InstructionType::Function(function) => out += function.0,
             InstructionType::Register(register) => out += &register,

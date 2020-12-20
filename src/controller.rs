@@ -247,7 +247,8 @@ impl Controller {
                 .unwrap();
             // TODO handle register
             let callsite = if program.is_dynamic_symbol(call_address) {
-                CallInstruction::dynamic_symbol(relative_ip, instruction.length, call_address)
+                let function = program.get_function_for_address(call_address).unwrap();
+                CallInstruction::dynamic_symbol(relative_ip, instruction.length, function)
             } else {
                 let function = program.get_function_for_address(call_address).unwrap();
                 CallInstruction::function(relative_ip, instruction.length, function)

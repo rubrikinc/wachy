@@ -25,6 +25,12 @@ impl fmt::Display for FunctionName {
     }
 }
 
+impl FunctionName {
+    pub fn pretty_print(&self) -> String {
+        cplus_demangle::demangle(self.0).unwrap_or(String::from(self.0))
+    }
+}
+
 pub struct Program {
     /// Only used when printing error messages
     pub file_path: String,
@@ -236,7 +242,11 @@ impl Program {
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {
-        self.address_to_name.get(&address).map(|f| f.clone())
+        if self.is_dynamic_symbol(address) {
+            self.dynamic_symbols_map.get(&address).map(|f| f.clone())
+        } else {
+            self.address_to_name.get(&address).map(|f| f.clone())
+        }
     }
 
     pub fn is_dynamic_symbol(&self, address: u64) -> bool {
