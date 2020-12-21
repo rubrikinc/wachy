@@ -11,9 +11,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
-use zydis::enums::generated::{AddressWidth, FormatterStyle, MachineMode, Mnemonic};
-use zydis::ffi::Decoder;
-use zydis::formatter::{Formatter, OutputBuffer};
+use zydis::enums::generated::Mnemonic;
 
 pub struct Controller {
     program: Program,
@@ -222,6 +220,31 @@ impl Controller {
         function: FunctionName,
         sview: &mut views::SourceView,
     ) -> Result<FrameInfo, Error> {
+        let frame_info = Controller::create_frame_info(program, function)?;
+        Controller::setup_source_view(&frame_info, sview)?;
+        Ok(frame_info)
+    }
+
+    fn setup_source_view(
+        frame_info: &FrameInfo,
+        sview: &mut views::SourceView,
+    ) -> Result<(), Error> {
+        // TODO cache file contents
+        let file = std::fs::File::open(frame_info.get_source_file()).unwrap();
+        let source_code: Vec<String> = std::io::BufReader::new(file)
+            .lines()
+            .map(|l| l.unwrap())
+            .collect();
+        views::set_source_view(
+            sview,
+            source_code,
+            frame_info.get_source_line(),
+            frame_info.called_lines(),
+        );
+        Ok(())
+    }
+
+    fn create_frame_info(program: &Program, function: FunctionName) -> Result<FrameInfo, Error> {
         let location = program.get_location(program.get_address(function)).ok_or(format!("Failed to get source information corresponding to function {}, please ensure {} has debugging symbols", function, program.file_path))?;
         let source_file = location.file.unwrap();
         let source_line = location.line.unwrap();
@@ -268,14 +291,6 @@ impl Controller {
             source_line,
             line_to_callsites,
         );
-
-        // TODO cache file contents
-        let file = std::fs::File::open(source_file).unwrap();
-        let source_code: Vec<String> = std::io::BufReader::new(file)
-            .lines()
-            .map(|l| l.unwrap())
-            .collect();
-        views::set_source_view(sview, source_code, source_line, frame_info.called_lines());
 
         Ok(frame_info)
     }

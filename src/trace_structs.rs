@@ -96,6 +96,14 @@ impl FrameInfo {
     pub fn called_lines(&self) -> Vec<u32> {
         self.line_to_callsites.keys().map(|l| *l).collect()
     }
+
+    pub fn get_source_file(&self) -> &str {
+        &self.source_file
+    }
+
+    pub fn get_source_line(&self) -> u32 {
+        self.source_line
+    }
 }
 
 impl CallInstruction {
