@@ -238,6 +238,14 @@ pub fn new_dialog(text: &str) -> Dialog {
     })
 }
 
+pub fn new_quit_dialog(text: &str) -> Dialog {
+    Dialog::text(text)
+        .button("Quit", Cursive::quit)
+        .button("Cancel", |siv| {
+            siv.pop_layer();
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

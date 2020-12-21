@@ -27,24 +27,27 @@ pub struct TraceCumulative {
 pub struct TraceStack {
     counter: AtomicU64,
     program_path: String,
-    /// Stack of functions being traced. Guaranteed to be non-empty.
+    /// Stack of functions being traced
     stack: Mutex<Frames>,
 }
 
 pub struct Frames {
+    /// Guaranteed to be non-empty
     frames: Vec<FrameInfo>,
     /// Gets notified whenever the stack is modified (i.e. get_bpftrace_expr
     /// would change).
     tx: Sender<()>,
 }
 
+#[derive(Debug, Clone)]
 pub struct FrameInfo {
     function: FunctionName,
     source_file: String,
     source_line: u32,
     /// Map from source line numbers to call functions on that line
     line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
-    /// Function calls to trace. Currently we only allow one per line.
+    /// Function calls that are actively traced. Currently we only allow one per
+    /// line.
     traced_callsites: HashMap<u32, CallInstruction>,
 }
 
@@ -209,6 +212,21 @@ impl TraceStack {
         guard.frames.push(frame);
         self.counter.fetch_add(1, Ordering::Release);
         guard.tx.send(()).unwrap();
+    }
+
+    /// Pops the current frame, if it is not the last one. Returns the new top
+    /// of the frame (note this is different from typical stack behavior).
+    pub fn pop(&self) -> Option<FrameInfo> {
+        let mut guard = self.stack.lock().unwrap();
+        if guard.frames.len() == 1 {
+            // We do not allow popping the last frame
+            return None;
+        }
+        guard.frames.pop();
+        let frame = (*guard.frames.last().unwrap()).clone();
+        self.counter.fetch_add(1, Ordering::Release);
+        guard.tx.send(()).unwrap();
+        Some(frame)
     }
 
     /// Get appropriate bpftrace expression for current state, along with

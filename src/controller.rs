@@ -43,110 +43,7 @@ impl Controller {
                 .title(format!("wachy | {}", program.file_path))
                 .full_screen(),
         );
-        siv.add_global_callback('x', |siv| {
-            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-            let line = sview.row().unwrap() as u32 + 1;
-            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
-            // We want to toggle tracing at this line - try to remove if it
-            // exists, otherwise proceed to add callsite.
-            if trace_stack.remove_callsite(line) {
-                Self::set_line_state(
-                    &mut *sview,
-                    line,
-                    TraceState::Untraced,
-                    TraceState::Untraced,
-                );
-                return;
-            }
-
-            let callsites = trace_stack.get_callsites(line);
-            if callsites.is_empty() {
-                let function = trace_stack.get_current_function();
-                siv.add_layer(views::new_dialog(&format!(
-                    "No calls found in {} on line {}. Note the call may have been inlined.",
-                    function, line
-                )));
-                return;
-            }
-            if callsites.len() > 1 {
-                siv.add_layer(views::new_search_view(
-                    "Select the call to trace",
-                    callsites,
-                    move |siv: &mut Cursive, ci: &CallInstruction| {
-                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        Self::set_line_state(
-                            &mut *sview,
-                            line,
-                            TraceState::Pending,
-                            TraceState::Pending,
-                        );
-                        let controller = siv.user_data::<Controller>().unwrap();
-                        controller.trace_stack.add_callsite(line, ci.clone());
-                    },
-                ));
-            } else {
-                Self::set_line_state(&mut *sview, line, TraceState::Pending, TraceState::Pending);
-                trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
-            }
-        });
-
-        siv.add_global_callback(
-            cursive::event::Event::Key(cursive::event::Key::Enter),
-            |siv| {
-                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                let line = sview.row().unwrap() as u32 + 1;
-                let controller = &siv.user_data::<Controller>().unwrap();
-                let trace_stack = &controller.trace_stack;
-                let callsites = trace_stack.get_callsites(line);
-                if callsites.is_empty() {
-                    let function = trace_stack.get_current_function();
-                    siv.add_layer(views::new_dialog(&format!(
-                        "No calls found in {} on line {}. Note the call may have been inlined.",
-                        function, line
-                    )));
-                    return;
-                }
-
-                // TODO allow entering any fn if dynamic call
-                let has_dynamic_calls = callsites.iter().any(|ci| {
-                    if let InstructionType::DynamicSymbol(_) = ci.instruction {
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                if callsites.len() > 1 {
-                    // TODO we should be searching functions not callsites
-                    siv.add_layer(views::new_search_view(
-                        "Select the call to enter",
-                        callsites,
-                        move |siv: &mut Cursive, ci: &CallInstruction| {
-                            if let InstructionType::Function(function) = ci.instruction {
-                                let mut sview =
-                                    siv.find_name::<views::SourceView>("source_view").unwrap();
-                                let controller = siv.user_data::<Controller>().unwrap();
-                                // TODO don't expect
-                                let frame_info = Controller::setup_function(
-                                    &controller.program,
-                                    function,
-                                    &mut *sview,
-                                )
-                                .expect(&format!("Error setting up function {}", function));
-                                controller.trace_stack.push(frame_info);
-                            }
-                        },
-                    ));
-                } else {
-                    if let InstructionType::Function(function) = callsites[0].instruction {
-                        let frame_info =
-                            Controller::setup_function(&controller.program, function, &mut *sview)
-                                .expect(&format!("Error setting up function {}", function));
-                        trace_stack.push(frame_info);
-                    }
-                }
-            },
-        );
+        Controller::add_callbacks(&mut siv);
 
         let controller = Controller {
             program,
@@ -304,5 +201,126 @@ impl Controller {
         let item = sview.borrow_items_mut().get_mut(line as usize - 1).unwrap();
         item.latency = latency;
         item.frequency = frequency;
+    }
+
+    fn add_callbacks(siv: &mut Cursive) {
+        siv.add_global_callback('x', |siv| {
+            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+            let line = sview.row().unwrap() as u32 + 1;
+            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+            // We want to toggle tracing at this line - try to remove if it
+            // exists, otherwise proceed to add callsite.
+            if trace_stack.remove_callsite(line) {
+                Self::set_line_state(
+                    &mut *sview,
+                    line,
+                    TraceState::Untraced,
+                    TraceState::Untraced,
+                );
+                return;
+            }
+
+            let callsites = trace_stack.get_callsites(line);
+            if callsites.is_empty() {
+                let function = trace_stack.get_current_function();
+                siv.add_layer(views::new_dialog(&format!(
+                    "No calls found in {} on line {}. Note the call may have been inlined.",
+                    function, line
+                )));
+                return;
+            }
+            if callsites.len() > 1 {
+                siv.add_layer(views::new_search_view(
+                    "Select the call to trace",
+                    callsites,
+                    move |siv: &mut Cursive, ci: &CallInstruction| {
+                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        Self::set_line_state(
+                            &mut *sview,
+                            line,
+                            TraceState::Pending,
+                            TraceState::Pending,
+                        );
+                        let controller = siv.user_data::<Controller>().unwrap();
+                        controller.trace_stack.add_callsite(line, ci.clone());
+                    },
+                ));
+            } else {
+                Self::set_line_state(&mut *sview, line, TraceState::Pending, TraceState::Pending);
+                trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
+            }
+        });
+
+        siv.add_global_callback(
+            cursive::event::Event::Key(cursive::event::Key::Enter),
+            |siv| {
+                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let line = sview.row().unwrap() as u32 + 1;
+                let controller = &siv.user_data::<Controller>().unwrap();
+                let trace_stack = &controller.trace_stack;
+                let callsites = trace_stack.get_callsites(line);
+                if callsites.is_empty() {
+                    let function = trace_stack.get_current_function();
+                    siv.add_layer(views::new_dialog(&format!(
+                        "No calls found in {} on line {}. Note the call may have been inlined.",
+                        function, line
+                    )));
+                    return;
+                }
+
+                // TODO allow entering any fn if dynamic call
+                let has_dynamic_calls = callsites.iter().any(|ci| {
+                    if let InstructionType::DynamicSymbol(_) = ci.instruction {
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                if callsites.len() > 1 {
+                    // TODO we should be searching functions not callsites
+                    siv.add_layer(views::new_search_view(
+                        "Select the call to enter",
+                        callsites,
+                        move |siv: &mut Cursive, ci: &CallInstruction| {
+                            if let InstructionType::Function(function) = ci.instruction {
+                                let mut sview =
+                                    siv.find_name::<views::SourceView>("source_view").unwrap();
+                                let controller = siv.user_data::<Controller>().unwrap();
+                                // TODO don't expect
+                                let frame_info = Controller::setup_function(
+                                    &controller.program,
+                                    function,
+                                    &mut *sview,
+                                )
+                                .expect(&format!("Error setting up function {}", function));
+                                controller.trace_stack.push(frame_info);
+                            }
+                        },
+                    ));
+                } else {
+                    if let InstructionType::Function(function) = callsites[0].instruction {
+                        let frame_info =
+                            Controller::setup_function(&controller.program, function, &mut *sview)
+                                .expect(&format!("Error setting up function {}", function));
+                        trace_stack.push(frame_info);
+                    }
+                }
+            },
+        );
+
+        siv.add_global_callback(
+            cursive::event::Event::Key(cursive::event::Key::Esc),
+            |siv| {
+                let controller = &siv.user_data::<Controller>().unwrap();
+                match controller.trace_stack.pop() {
+                    Some(frame_info) => {
+                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        Controller::setup_source_view(&frame_info, &mut *sview).unwrap();
+                    }
+                    None => siv.add_layer(views::new_quit_dialog("Are you sure you want to quit?")),
+                }
+            },
+        );
     }
 }
