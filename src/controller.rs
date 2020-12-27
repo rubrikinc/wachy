@@ -7,6 +7,7 @@ use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
+use program::SymbolInfo;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -169,7 +170,7 @@ impl Controller {
                     let call_address = instruction
                         .calc_absolute_address(ip, &instruction.operands[0])
                         .unwrap();
-                    if program.is_dynamic_symbol(call_address) {
+                    if program.is_dynamic_symbol_address(call_address) {
                         let function = program.get_function_for_address(call_address).unwrap();
                         CallInstruction::dynamic_symbol(relative_ip, instruction.length, function)
                     } else {
@@ -286,39 +287,69 @@ impl Controller {
                 }
 
                 let num_callsites = callsites.len();
-                let direct_callsites: Vec<CallInstruction> = callsites
+                let direct_calls: Vec<SymbolInfo> = callsites
                     .into_iter()
-                    .filter(|ci| {
-                        if let InstructionType::Register(_) = ci.instruction {
-                            false
-                        } else {
-                            true
+                    .filter_map(|ci| match ci.instruction {
+                        InstructionType::Register(_) => None,
+                        InstructionType::DynamicSymbol(function) => {
+                            Some(controller.program.get_symbol(function))
+                        }
+                        InstructionType::Function(function) => {
+                            Some(controller.program.get_symbol(function))
                         }
                     })
+                    .map(|si| si.clone())
                     .collect();
                 // TODO allow entering any fn if dynamic call
-                let num_indirect_calls = num_callsites - direct_callsites.len();
+                let num_indirect_calls = num_callsites - direct_calls.len();
 
                 if num_callsites > 1 || num_indirect_calls > 0 {
                     // TODO we should be searching functions not callsites
                     let search_view = views::new_search_view(
                         siv,
                         "Select the call to enter",
-                        move |_siv, search, n_results| {
-                            views::rank_fn(direct_callsites.iter(), search, n_results)
+                        move |siv: &mut Cursive, search: &str, mut n_results: usize| {
+                            if search.is_empty() {
+                                if num_indirect_calls > 0 {
+                                    n_results -= 1;
+                                }
+                                let mut results =
+                                    views::rank_fn(direct_calls.iter(), search, n_results);
+                                if num_indirect_calls > 0 {
+                                    let call_string = if num_indirect_calls == 1 {
+                                        "1 indirect call".to_string()
+                                    } else {
+                                        format!("{} indirect calls", num_indirect_calls)
+                                    };
+                                    results
+                                        .push((format!("{} (type to search)", call_string), None));
+                                }
+                                results
+                            } else {
+                                let controller = &siv.user_data::<Controller>().unwrap();
+                                let mut it: Box<dyn Iterator<Item = &SymbolInfo>> =
+                                    Box::new(direct_calls.iter());
+                                if num_indirect_calls > 0 {
+                                    it = Box::new(it.chain(controller.program.symbols_iterator()));
+                                }
+                                views::rank_fn(it, search, n_results)
+                            }
                         },
-                        move |siv: &mut Cursive, ci: &CallInstruction| {
-                            if let InstructionType::Function(function) = ci.instruction {
+                        move |siv: &mut Cursive, symbol: &SymbolInfo| {
+                            let controller = &siv.user_data::<Controller>().unwrap();
+                            if controller.program.is_dynamic_symbol(symbol) {
+                                // TODO show error for dyn fn
+                            } else {
                                 let mut sview =
                                     siv.find_name::<views::SourceView>("source_view").unwrap();
                                 let controller = siv.user_data::<Controller>().unwrap();
                                 // TODO don't expect
                                 let frame_info = Controller::setup_function(
                                     &controller.program,
-                                    function,
+                                    symbol.name,
                                     &mut *sview,
                                 )
-                                .expect(&format!("Error setting up function {}", function));
+                                .expect(&format!("Error setting up function {}", symbol.name));
                                 controller.trace_stack.push(frame_info);
                             }
                             // TODO show error for dyn fn
@@ -326,10 +357,16 @@ impl Controller {
                     );
                     siv.add_layer(search_view);
                 } else {
-                    if let InstructionType::Function(function) = direct_callsites[0].instruction {
-                        let frame_info =
-                            Controller::setup_function(&controller.program, function, &mut *sview)
-                                .expect(&format!("Error setting up function {}", function));
+                    let symbol = &direct_calls[0];
+                    if controller.program.is_dynamic_symbol(symbol) {
+                        // TODO show error for dyn fn
+                    } else {
+                        let frame_info = Controller::setup_function(
+                            &controller.program,
+                            symbol.name,
+                            &mut *sview,
+                        )
+                        .expect(&format!("Error setting up function {}", symbol.name));
                         trace_stack.push(frame_info);
                     }
                 }
@@ -352,6 +389,11 @@ impl Controller {
     }
 }
 
+impl views::Label for CallInstruction {
+    fn label(&self) -> Cow<str> {
+        Cow::Owned(self.to_string())
+    }
+}
 impl views::Label for program::SymbolInfo {
     fn label(&self) -> Cow<str> {
         Cow::Borrowed(self.as_ref())

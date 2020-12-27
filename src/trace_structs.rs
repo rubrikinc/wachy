@@ -54,7 +54,7 @@ pub struct FrameInfo {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstructionType {
-    /// Dynamic symbol
+    /// Dynamically linked function
     DynamicSymbol(FunctionName),
     /// Function being called, if it's a hardcoded function
     Function(FunctionName),
@@ -144,7 +144,7 @@ impl fmt::Display for CallInstruction {
                 out += &addr.pretty_print();
             }
             InstructionType::Function(function) => out += function.0,
-            InstructionType::Register(register) => out += &register,
+            InstructionType::Register(register) => out += &format!("register {}", register),
         }
         f.write_str(&out)
     }

@@ -65,6 +65,10 @@ impl AsRef<str> for SymbolInfo {
 impl fmt::Display for SymbolInfo {
     // This is used to display the symbol in search results
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.address == 0 {
+            // Undefined symbol
+            fmt::Display::fmt("(D) ", f)?
+        }
         fmt::Display::fmt(self.as_ref(), f)
     }
 }
@@ -264,6 +268,10 @@ impl Program {
 
     pub fn get_symbol(&self, function: FunctionName) -> &SymbolInfo {
         &self.name_to_symbol.get(&function).unwrap()
+    }
+
+    pub fn symbols_iterator(&self) -> std::collections::hash_map::Values<FunctionName, SymbolInfo> {
+        self.name_to_symbol.values()
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {

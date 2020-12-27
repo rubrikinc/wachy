@@ -179,10 +179,9 @@ pub trait Label {
     fn label(&self) -> Cow<str>;
 }
 
-// TODO remove
-impl<T: std::fmt::Display> Label for T {
+impl Label for &str {
     fn label(&self) -> Cow<str> {
-        Cow::Owned(self.to_string())
+        Cow::Borrowed(self)
     }
 }
 
@@ -214,7 +213,7 @@ where
     // in the form (display_string, item). An item may be None in which case selecting it
     // will be a no-op. It's recommended to use rank_fn.
     F: Fn(&mut Cursive, &str, usize) -> Vec<(String, Option<T>)> + 'static,
-    T: Label + 'static,
+    T: 'static,
     G: Fn(&mut Cursive, &T) + 'static,
 {
     let cb = Rc::new(callback);
