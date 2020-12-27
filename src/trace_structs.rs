@@ -1,5 +1,6 @@
 use crate::program::FunctionName;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
@@ -135,17 +136,17 @@ impl CallInstruction {
     }
 }
 
-impl From<CallInstruction> for String {
-    fn from(c: CallInstruction) -> Self {
-        let mut out = format!("{}: ", c.relative_ip);
-        match c.instruction {
+impl fmt::Display for CallInstruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = format!("{}: ", self.relative_ip);
+        match &self.instruction {
             InstructionType::DynamicSymbol(addr) => {
                 out += &addr.pretty_print();
             }
             InstructionType::Function(function) => out += function.0,
             InstructionType::Register(register) => out += &register,
         }
-        out
+        f.write_str(&out)
     }
 }
 

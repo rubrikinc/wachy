@@ -21,5 +21,5 @@ memmap = "0.7.0"
 object = { path = "../object" }
 serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0.57"
-simple-logging = "2.0.2"
+simple-logging = { path = "../simple-logging" }
 zydis = "3.1.1"

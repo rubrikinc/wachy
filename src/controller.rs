@@ -7,11 +7,12 @@ use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
 use cursive::Cursive;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
-use zydis::enums::generated::Mnemonic;
+use zydis::enums::generated::{Mnemonic, Register};
 
 pub struct Controller {
     program: Program,
@@ -160,25 +161,37 @@ impl Controller {
         for (instruction, ip) in
             program::get_instructions_with_mnemonic(&decoder, start_address, code, Mnemonic::CALL)
         {
-            assert!(instruction.operand_count > 0);
             let relative_ip = u32::try_from(ip - start_address).unwrap();
-            let call_address = instruction
-                .calc_absolute_address(ip, &instruction.operands[0])
-                .unwrap();
-            // TODO handle register
-            let callsite = if program.is_dynamic_symbol(call_address) {
-                let function = program.get_function_for_address(call_address).unwrap();
-                CallInstruction::dynamic_symbol(relative_ip, instruction.length, function)
-            } else {
-                let function = program.get_function_for_address(call_address).unwrap();
-                CallInstruction::function(relative_ip, instruction.length, function)
+            assert!(instruction.operand_count > 0);
+            let operand = &instruction.operands[0];
+            let call_instruction = match operand.reg {
+                Register::NONE => {
+                    let call_address = instruction
+                        .calc_absolute_address(ip, &instruction.operands[0])
+                        .unwrap();
+                    if program.is_dynamic_symbol(call_address) {
+                        let function = program.get_function_for_address(call_address).unwrap();
+                        CallInstruction::dynamic_symbol(relative_ip, instruction.length, function)
+                    } else {
+                        let function = program.get_function_for_address(call_address).unwrap();
+                        CallInstruction::function(relative_ip, instruction.length, function)
+                    }
+                }
+                r => {
+                    // TODO convert register string to bpftrace register
+                    CallInstruction::register(
+                        relative_ip,
+                        instruction.length,
+                        r.get_string().unwrap().to_string(),
+                    )
+                }
             };
             let location = program.get_location(ip).unwrap();
             assert!(location.file.unwrap() == source_file);
             line_to_callsites
                 .entry(location.line.unwrap())
                 .or_default()
-                .push(callsite);
+                .push(call_instruction);
         }
 
         log::trace!("{:?}", line_to_callsites);
@@ -230,9 +243,12 @@ impl Controller {
                 return;
             }
             if callsites.len() > 1 {
-                siv.add_layer(views::new_search_view(
+                let search_view = views::new_search_view(
+                    siv,
                     "Select the call to trace",
-                    callsites,
+                    move |_siv, search, n_results| {
+                        views::rank_fn(callsites.iter(), search, n_results)
+                    },
                     move |siv: &mut Cursive, ci: &CallInstruction| {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
                         Self::set_line_state(
@@ -244,7 +260,8 @@ impl Controller {
                         let controller = siv.user_data::<Controller>().unwrap();
                         controller.trace_stack.add_callsite(line, ci.clone());
                     },
-                ));
+                );
+                siv.add_layer(search_view);
             } else {
                 Self::set_line_state(&mut *sview, line, TraceState::Pending, TraceState::Pending);
                 trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
@@ -268,20 +285,28 @@ impl Controller {
                     return;
                 }
 
+                let num_callsites = callsites.len();
+                let direct_callsites: Vec<CallInstruction> = callsites
+                    .into_iter()
+                    .filter(|ci| {
+                        if let InstructionType::Register(_) = ci.instruction {
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
                 // TODO allow entering any fn if dynamic call
-                let has_dynamic_calls = callsites.iter().any(|ci| {
-                    if let InstructionType::DynamicSymbol(_) = ci.instruction {
-                        true
-                    } else {
-                        false
-                    }
-                });
+                let num_indirect_calls = num_callsites - direct_callsites.len();
 
-                if callsites.len() > 1 {
+                if num_callsites > 1 || num_indirect_calls > 0 {
                     // TODO we should be searching functions not callsites
-                    siv.add_layer(views::new_search_view(
+                    let search_view = views::new_search_view(
+                        siv,
                         "Select the call to enter",
-                        callsites,
+                        move |_siv, search, n_results| {
+                            views::rank_fn(direct_callsites.iter(), search, n_results)
+                        },
                         move |siv: &mut Cursive, ci: &CallInstruction| {
                             if let InstructionType::Function(function) = ci.instruction {
                                 let mut sview =
@@ -296,10 +321,12 @@ impl Controller {
                                 .expect(&format!("Error setting up function {}", function));
                                 controller.trace_stack.push(frame_info);
                             }
+                            // TODO show error for dyn fn
                         },
-                    ));
+                    );
+                    siv.add_layer(search_view);
                 } else {
-                    if let InstructionType::Function(function) = callsites[0].instruction {
+                    if let InstructionType::Function(function) = direct_callsites[0].instruction {
                         let frame_info =
                             Controller::setup_function(&controller.program, function, &mut *sview)
                                 .expect(&format!("Error setting up function {}", function));
@@ -322,5 +349,11 @@ impl Controller {
                 }
             },
         );
+    }
+}
+
+impl views::Label for program::SymbolInfo {
+    fn label(&self) -> Cow<str> {
+        Cow::Borrowed(self.as_ref())
     }
 }

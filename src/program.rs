@@ -45,7 +45,7 @@ pub struct Program {
 }
 
 #[derive(Debug)]
-struct SymbolInfo {
+pub struct SymbolInfo {
     name: FunctionName,
     demangled_name: Option<String>,
     section_index: Option<object::SectionIndex>,
@@ -53,8 +53,8 @@ struct SymbolInfo {
     size: u64,
 }
 
-impl SymbolInfo {
-    fn display_name(&self) -> &str {
+impl AsRef<str> for SymbolInfo {
+    fn as_ref(&self) -> &str {
         match &self.demangled_name {
             Some(dn) => &dn,
             None => self.name.0,
@@ -188,7 +188,7 @@ impl Program {
     pub fn get_matches(&self, function_name: &str) -> Vec<FunctionName> {
         let mut matches = Vec::new();
         for (name, symbol) in &self.name_to_symbol {
-            let display_name = symbol.display_name();
+            let display_name = symbol.as_ref();
             if display_name == function_name {
                 return vec![*name];
             }
@@ -239,6 +239,10 @@ impl Program {
                 .unwrap()
                 .unwrap(),
         ))
+    }
+
+    pub fn get_symbol(&self, function: FunctionName) -> &SymbolInfo {
+        &self.name_to_symbol.get(&function).unwrap()
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {

@@ -5,7 +5,7 @@ use cursive::Cursive;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use itertools::Itertools;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug)]
@@ -175,52 +175,91 @@ pub type SearchView = ResizedView<Dialog>;
 const SEARCH_VIEW_WIDTH: usize = 40;
 const SEARCH_VIEW_HEIGHT: usize = 8;
 
-/// `title` must be unique (it is used in the name of the view).
-pub fn new_search_view<T, F>(title: &str, items: Vec<T>, callback: F) -> SearchView
+pub trait Label {
+    fn label(&self) -> Cow<str>;
+}
+
+// TODO remove
+impl<T: std::fmt::Display> Label for T {
+    fn label(&self) -> Cow<str> {
+        Cow::Owned(self.to_string())
+    }
+}
+
+pub fn rank_fn<'a, T, I>(it: I, search: &str, n_results: usize) -> Vec<(String, Option<T>)>
 where
-    T: Clone + Into<String> + 'static,
-    F: Fn(&mut Cursive, &T) + 'static,
+    T: Clone + std::fmt::Display + Label + 'static,
+    I: Iterator<Item = &'a T>,
+{
+    let matcher = SkimMatcherV2::default();
+    it.filter_map(|i| match matcher.fuzzy_match(i.label().borrow(), search) {
+        Some(score) => Some((score, i)),
+        None => None,
+    })
+    .sorted_by(|(score1, _), (score2, _)| score1.cmp(score2).reverse())
+    .take(n_results)
+    .map(|(_, i)| (i.to_string(), Some(i.clone())))
+    .collect()
+}
+
+/// `title` must be unique (it is used in the name of the view).
+pub fn new_search_view<T, F, G>(
+    siv: &mut Cursive,
+    title: &str,
+    get_top_results_fn: F,
+    callback: G,
+) -> SearchView
+where
+    // Given search string and (max) number of results, return the top results
+    // in the form (display_string, item). An item may be None in which case selecting it
+    // will be a no-op. It's recommended to use rank_fn.
+    F: Fn(&mut Cursive, &str, usize) -> Vec<(String, Option<T>)> + 'static,
+    T: Label + 'static,
+    G: Fn(&mut Cursive, &T) + 'static,
 {
     let cb = Rc::new(callback);
     let cb_copy = Rc::clone(&cb);
     let name = format!("select_{}", title);
     let name_copy = name.clone();
-    let items: Vec<(String, T)> = items.into_iter().map(|i| (i.clone().into(), i)).collect();
-    let mut select_view = SelectView::<T>::new();
-    for (label, value) in items.iter().take(SEARCH_VIEW_HEIGHT) {
-        select_view.add_item(label, value.clone());
-    }
+
+    // SelectView value of None represents ExtraItems::summary which is a no-op
+    // to hit enter on.
+    let mut select_view = SelectView::<Option<T>>::new();
+    let display_results = |select_view: &mut SelectView<Option<T>>,
+                           results: Vec<(String, Option<T>)>| {
+        for (label, value) in results {
+            select_view.add_item(label, value);
+        }
+    };
+    let results = get_top_results_fn(siv, "", SEARCH_VIEW_HEIGHT);
+    display_results(&mut select_view, results);
+
     let select_view = select_view
-        .on_submit(move |siv: &mut Cursive, item: &T| {
-            siv.pop_layer();
-            cb(siv, item);
+        .on_submit(move |siv: &mut Cursive, sel: &Option<T>| {
+            if let Some(item) = sel {
+                siv.pop_layer();
+                cb(siv, item);
+            }
         })
         .with_name(&name)
         .fixed_size((SEARCH_VIEW_WIDTH, 8));
 
-    let matcher = SkimMatcherV2::default();
     let update_edit_view = move |siv: &mut Cursive, search: &str, _| {
-        let mut select_view = siv.find_name::<SelectView<T>>(&name).unwrap();
-        let matches = items
-            .iter()
-            .filter_map(|i| match matcher.fuzzy_match(&i.0, search) {
-                Some(score) => Some((score, i)),
-                None => None,
-            })
-            .sorted_by(|(score1, _), (score2, _)| score1.cmp(score2).reverse());
+        let mut select_view = siv.find_name::<SelectView<Option<T>>>(&name).unwrap();
         select_view.clear();
-        for (_, (label, value)) in matches.take(SEARCH_VIEW_HEIGHT) {
-            select_view.add_item(label, value.clone());
-        }
+        let results = get_top_results_fn(siv, search, SEARCH_VIEW_HEIGHT);
+        display_results(&mut select_view, results);
     };
     let edit_view = EditView::new()
         .filler(" ")
         .on_edit_mut(update_edit_view)
         .on_submit(move |siv: &mut Cursive, _| {
-            let select_view = siv.find_name::<SelectView<T>>(&name_copy).unwrap();
-            if let Some(item) = select_view.selection() {
-                siv.pop_layer();
-                cb_copy(siv, item.borrow());
+            let select_view = siv.find_name::<SelectView<Option<T>>>(&name_copy).unwrap();
+            if let Some(sel) = select_view.selection() {
+                if let Some(item) = sel.borrow() {
+                    siv.pop_layer();
+                    cb_copy(siv, item);
+                }
             }
         })
         .with_name(format!("search_{}", title))
@@ -264,12 +303,19 @@ mod tests {
             "Lemons",
             "Avocados",
         ];
+
         let callback = |siv: &mut Cursive, selection: &&str| {
             siv.add_layer(
                 Dialog::text(format!("You selected: {}", selection)).button("Quit", Cursive::quit),
             );
         };
-        siv.add_layer(new_search_view("test", items, callback));
+        let search_view = new_search_view(
+            &mut siv,
+            "test",
+            move |_siv, search, n_results| rank_fn(items.iter(), search, n_results),
+            callback,
+        );
+        siv.add_layer(search_view);
         siv.run();
     }
 }

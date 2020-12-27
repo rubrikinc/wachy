@@ -679,8 +679,6 @@ dependencies = [
 [[package]]
 name = "simple-logging"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b00d48e85675326bb182a2286ea7c1a0b264333ae10f27a937a72be08628b542"
 dependencies = [
  "lazy_static",
  "log",
