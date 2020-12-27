@@ -40,13 +40,13 @@ pub struct Program {
     context: addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
-    dynamic_symbols_range: std::ops::Range<u64>,
+    dynamic_symbols_ranges: Vec<std::ops::Range<u64>>,
     dynamic_symbols_map: HashMap<u64, FunctionName>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SymbolInfo {
-    name: FunctionName,
+    pub name: FunctionName,
     demangled_name: Option<String>,
     section_index: Option<object::SectionIndex>,
     address: u64,
@@ -59,6 +59,13 @@ impl AsRef<str> for SymbolInfo {
             Some(dn) => &dn,
             None => self.name.0,
         }
+    }
+}
+
+impl fmt::Display for SymbolInfo {
+    // This is used to display the symbol in search results
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), f)
     }
 }
 
@@ -84,24 +91,29 @@ impl Program {
         };
 
         // TODO fixup unwraps
-        let dynamic_symbols_range = file
+        let dynamic_symbols_ranges = file
             .sections()
-            .filter(|s| s.name().unwrap() == ".plt")
+            .filter(|s| s.name().unwrap().starts_with(".plt")) // Include .plt and .plt.got
             .map(|s| std::ops::Range {
                 start: s.address(),
                 end: s.address() + s.size(),
             })
-            .next()
-            .unwrap();
+            .collect();
 
-        let function_names: Vec<SymbolInfo> = file
+        let mut versioned_symbols_map: HashMap<String, FunctionName> = HashMap::new();
+        let symbols: Vec<SymbolInfo> = file
             .symbols()
             .filter(|symbol| symbol.kind() == object::SymbolKind::Text) // Filter to functions
             .map(|symbol| {
                 symbol.name().map(|name| {
                     let demangled_name = cplus_demangle::demangle(name).ok();
+                    let function = FunctionName(name);
+                    if name.contains("@@") {
+                        versioned_symbols_map
+                            .insert(name.split("@@").next().unwrap().to_string(), function);
+                    }
                     SymbolInfo {
-                        name: FunctionName(name),
+                        name: function,
                         demangled_name,
                         section_index: symbol.section_index(),
                         address: symbol.address(),
@@ -115,12 +127,9 @@ impl Program {
             })
             .collect();
 
-        let dynamic_symbols_map = Program::dynamic_symbols_map(&file);
+        let dynamic_symbols_map = Program::dynamic_symbols_map(&file, &versioned_symbols_map);
 
-        // Note: reversing this map can create collisions.
-        // https://stackoverflow.com/questions/49824915/ambiguity-of-de-mangled-c-symbols
-        let name_to_symbol: HashMap<_, _> =
-            function_names.into_iter().map(|si| (si.name, si)).collect();
+        let name_to_symbol: HashMap<_, _> = symbols.into_iter().map(|si| (si.name, si)).collect();
 
         let address_to_name: HashMap<_, _> = name_to_symbol
             .iter()
@@ -136,12 +145,18 @@ impl Program {
             name_to_symbol,
             address_to_name,
             context,
-            dynamic_symbols_range,
+            dynamic_symbols_ranges,
             dynamic_symbols_map,
         })
     }
 
-    fn dynamic_symbols_map(file: &object::read::File<'static>) -> HashMap<u64, FunctionName> {
+    // `versioned_symbols_map` is a map from unversioned symbol name to the
+    // versioned one. The dynamic symbols section seems to contain unversioned
+    // symbol names.
+    fn dynamic_symbols_map(
+        file: &object::read::File<'static>,
+        versioned_symbols_map: &HashMap<String, FunctionName>,
+    ) -> HashMap<u64, FunctionName> {
         let mut relocations = HashMap::new();
         let dynamic_symbols = file.dynamic_symbol_table().unwrap();
         let reloc_iter = file.dynamic_relocations().unwrap();
@@ -174,8 +189,14 @@ impl Program {
                         log::trace!("PLT {:#x?} -> GOT {:#x?}", ip, jump_address);
                         // Ignore expected jumps to PLT0 - figure A-9 in
                         // https://refspecs.linuxfoundation.org/elf/elf.pdf
-                        if let Some(name) = relocations.get(&jump_address) {
-                            map.insert(ip, FunctionName(*name));
+                        if let Some(&name) = relocations.get(&jump_address) {
+                            let name = if let Some(versioned_name) = versioned_symbols_map.get(name)
+                            {
+                                *versioned_name
+                            } else {
+                                FunctionName(name)
+                            };
+                            map.insert(ip, name);
                         }
                     }
                 }
@@ -246,15 +267,21 @@ impl Program {
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {
-        if self.is_dynamic_symbol(address) {
+        if self.is_dynamic_symbol_address(address) {
             self.dynamic_symbols_map.get(&address).map(|f| f.clone())
         } else {
             self.address_to_name.get(&address).map(|f| f.clone())
         }
     }
 
-    pub fn is_dynamic_symbol(&self, address: u64) -> bool {
-        return self.dynamic_symbols_range.contains(&address);
+    pub fn is_dynamic_symbol_address(&self, address: u64) -> bool {
+        self.dynamic_symbols_ranges
+            .iter()
+            .any(|r| r.contains(&address))
+    }
+
+    pub fn is_dynamic_symbol(&self, symbol: &SymbolInfo) -> bool {
+        self.is_dynamic_symbol_address(symbol.address)
     }
 }
 
