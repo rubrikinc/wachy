@@ -221,6 +221,7 @@ impl Program {
                 matches.push(*name);
             }
         }
+        log::debug!("Matches for {}: {:?}", function_name, matches);
         matches
     }
 

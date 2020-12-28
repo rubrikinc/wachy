@@ -210,6 +210,7 @@ impl TraceStack {
 
     pub fn push(&self, frame: FrameInfo) {
         let mut guard = self.stack.lock().unwrap();
+        // TODO prevent recursive (or do we need to?)
         guard.frames.push(frame);
         self.counter.fetch_add(1, Ordering::Release);
         guard.tx.send(()).unwrap();
@@ -240,21 +241,37 @@ impl TraceStack {
         // We use line number in variable naming to identify the results.
         let guard = self.stack.lock().unwrap();
         let frames = &guard.frames;
-        let mut parts: Vec<String> = vec!["BEGIN { @start_time = nsecs } ".into()];
+        let mut parts: Vec<String> =
+            vec!["BEGIN { @start_time = nsecs; @depth[-1] = 0; } ".to_string()];
         for (i, frame) in frames.iter().enumerate() {
             if i != frames.len() - 1 {
-                // TODO
+                parts.push(format!(
+                    "uprobe:{}:{} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
+                    self.program_path,
+                    frame.function,
+                    i,
+                    i + 1
+                ));
+                parts.push(format!(
+                    "uretprobe:{}:{} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
+                    self.program_path,
+                    frame.function,
+                    i + 1,
+                    i
+                ));
             }
         }
+
+        let frame_depth = frames.len() - 1;
         let frame = frames.last().unwrap();
         let line = frame.source_line;
         let mut lines = vec![line];
         let function = frame.function;
         parts.push(format!(
-            "uprobe:{}:{} {{ @start{}[tid] = nsecs; }} ",
-            self.program_path, function, line
+            "uprobe:{}:{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
+            self.program_path, function, frame_depth, line
         ));
-        parts.push(format!("uretprobe:{}:{} {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+        parts.push(format!("uretprobe:{}:{} /@start{line}[tid] != 0/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
 
         for (&line, callsite) in &frame.traced_callsites {
             lines.push(line);
@@ -279,7 +296,7 @@ impl TraceStack {
                 line = line
             ));
         }
-        parts.push(r#"printf("}}\n"); }"#.into());
+        parts.push(r#"printf("}}\n"); }"#.to_string());
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
         // Since we hold lock we know counter won't change
