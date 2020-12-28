@@ -141,10 +141,10 @@ impl fmt::Display for CallInstruction {
         let mut out = format!("{}: ", self.relative_ip);
         match &self.instruction {
             InstructionType::DynamicSymbol(addr) => {
-                out += &addr.pretty_print();
+                out += &format!("(D) {}", addr.pretty_print());
             }
             InstructionType::Function(function) => out += function.0,
-            InstructionType::Register(register) => out += &format!("register {}", register),
+            InstructionType::Register(register) => out += &format!("(I) register {}", register),
         }
         f.write_str(&out)
     }
