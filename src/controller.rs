@@ -166,24 +166,37 @@ impl Controller {
             assert!(instruction.operand_count > 0);
             let operand = &instruction.operands[0];
             let call_instruction = match operand.reg {
-                Register::NONE => {
-                    let call_address = instruction
-                        .calc_absolute_address(ip, &instruction.operands[0])
-                        .unwrap();
-                    if program.is_dynamic_symbol_address(call_address) {
-                        let function = program.get_function_for_address(call_address).unwrap();
-                        CallInstruction::dynamic_symbol(relative_ip, instruction.length, function)
-                    } else {
-                        let function = program.get_function_for_address(call_address).unwrap();
-                        CallInstruction::function(relative_ip, instruction.length, function)
+                Register::NONE => match operand.mem.base {
+                    Register::NONE => {
+                        let call_address = instruction
+                            .calc_absolute_address(ip, &instruction.operands[0])
+                            .unwrap();
+                        if program.is_dynamic_symbol_address(call_address) {
+                            let function = program.get_function_for_address(call_address).unwrap();
+                            CallInstruction::dynamic_symbol(
+                                relative_ip,
+                                instruction.length,
+                                function,
+                            )
+                        } else {
+                            let function = program.get_function_for_address(call_address).unwrap();
+                            CallInstruction::function(relative_ip, instruction.length, function)
+                        }
                     }
-                }
+                    r => CallInstruction::register(
+                        relative_ip,
+                        instruction.length,
+                        r.get_string().unwrap().to_string(),
+                        Some(operand.mem.disp.displacement),
+                    ),
+                },
                 r => {
                     // TODO convert register string to bpftrace register
                     CallInstruction::register(
                         relative_ip,
                         instruction.length,
                         r.get_string().unwrap().to_string(),
+                        None,
                     )
                 }
             };
@@ -301,7 +314,7 @@ impl Controller {
                 let direct_calls: Vec<SymbolInfo> = callsites
                     .into_iter()
                     .filter_map(|ci| match ci.instruction {
-                        InstructionType::Register(_) => None,
+                        InstructionType::Register(_, _) => None,
                         InstructionType::DynamicSymbol(function) => {
                             Some(controller.program.get_symbol(function))
                         }

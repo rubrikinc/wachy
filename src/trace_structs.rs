@@ -58,10 +58,11 @@ pub enum InstructionType {
     DynamicSymbol(FunctionName),
     /// Function being called, if it's a hardcoded function
     Function(FunctionName),
-    /// Register being called. Note: must be a bpftrace register
+    /// Register being called. Note: should be a bpftrace register
     /// https://github.com/iovisor/bpftrace/blob/master/src/arch/x86_64.cpp,
     /// which notably does not have E or R prefixes.
-    Register(String),
+    /// Second field represents displacement within register.
+    Register(String, Option<i64>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,26 +128,42 @@ impl CallInstruction {
         }
     }
 
-    pub fn register(relative_ip: u32, length: u8, register: String) -> CallInstruction {
+    pub fn register(
+        relative_ip: u32,
+        length: u8,
+        register: String,
+        displacement: Option<i64>,
+    ) -> CallInstruction {
         CallInstruction {
             relative_ip,
             length,
-            instruction: InstructionType::Register(register),
+            instruction: InstructionType::Register(register, displacement),
         }
     }
 }
 
 impl fmt::Display for CallInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = format!("{}: ", self.relative_ip);
-        match &self.instruction {
-            InstructionType::DynamicSymbol(addr) => {
-                out += &format!("(D) {}", addr.pretty_print());
-            }
-            InstructionType::Function(function) => out += function.0,
-            InstructionType::Register(register) => out += &format!("(I) register {}", register),
+        f.write_fmt(format_args!("{}: ", self.relative_ip))?;
+        let i = &self.instruction;
+        match i {
+            InstructionType::DynamicSymbol(_) => f.write_fmt(format_args!("(D) {}", i)),
+            InstructionType::Function(_) => f.write_fmt(format_args!("{}", i)),
+            InstructionType::Register(_, _) => f.write_fmt(format_args!("(I) register {}", i)),
         }
-        f.write_str(&out)
+    }
+}
+
+impl fmt::Display for InstructionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstructionType::DynamicSymbol(addr) => f.write_str(&addr.pretty_print()),
+            InstructionType::Function(function) => f.write_str(function.0),
+            InstructionType::Register(register, displacement) => match displacement {
+                Some(d) => f.write_fmt(format_args!("[{}+0x{:x}]", register, d)),
+                None => f.write_str(register),
+            },
+        }
     }
 }
 
