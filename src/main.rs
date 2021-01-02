@@ -8,6 +8,11 @@ mod views;
 use std::env;
 use std::fmt::Write;
 use std::panic::PanicInfo;
+use std::sync::Mutex;
+
+lazy_static::lazy_static! {
+    static ref PANIC_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
+}
 
 fn setup_logging() {
     if let Ok(var) = env::var("WACHY_LOG") {
@@ -41,8 +46,11 @@ fn main() {
         Ok(())
     };
 
+    // cursive messes with terminal output so trying to print while it is still
+    // displayed will not show proper output. To properly display panics, we
+    // save them with a hook, drop the cursive object and then print them
+    // afterwards.
     std::panic::set_hook(Box::new(|info: &PanicInfo| {
-        // TODO write to separate log file, print after dropping cursive
         let mut msg = String::new();
         let _ = writeln!(msg, "Panic! [v{}]", env!("CARGO_PKG_VERSION"));
         if let Some(payload) = info.payload().downcast_ref::<&str>() {
@@ -57,12 +65,22 @@ fn main() {
         let _ = writeln!(msg, "{:#?}", backtrace::Backtrace::new());
 
         log::error!("{}", msg);
-        eprintln!("{}", msg);
+
+        let mut saved_panic = PANIC_MESSAGE.lock().unwrap();
+        // Only store first backtrace
+        if saved_panic.is_none() {
+            *saved_panic = Some(msg)
+        }
     }));
 
-    let ret = run();
-    if ret.is_err() {
-        let err = ret.unwrap_err();
+    // catch_unwind doesn't give us stacktrace, that's why we use a panic hook
+    // too.
+    let ret = std::panic::catch_unwind(|| run());
+    if let Some(msg) = PANIC_MESSAGE.lock().unwrap().clone() {
+        eprintln!("Error: {}", msg);
+        std::process::exit(1);
+    }
+    if let Ok(Err(err)) = ret {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     };

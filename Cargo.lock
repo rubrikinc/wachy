@@ -785,6 +785,7 @@ dependencies = [
  "fuzzy-matcher",
  "gimli 0.23.0",
  "itertools",
+ "lazy_static",
  "libc",
  "log",
  "memmap",
