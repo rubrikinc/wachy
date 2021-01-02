@@ -271,17 +271,17 @@ impl TraceStack {
             "uprobe:{}:{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
             self.program_path, function, frame_depth, line
         ));
-        parts.push(format!("uretprobe:{}:{} /@start{line}[tid] != 0/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+        parts.push(format!("uretprobe:{}:{} /@start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
 
         for (&line, callsite) in &frame.traced_callsites {
             lines.push(line);
             parts.push(format!(
-                "uprobe:{}:{}+{} {{ @start{}[tid] = nsecs; }} ",
-                self.program_path, function, callsite.relative_ip, line
+                "uprobe:{}:{}+{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
+                self.program_path, function, callsite.relative_ip, frame_depth, line
             ));
             parts.push(format!(
-                "uprobe:{}:{}+{} /@start{line}[tid] != 0/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
-                self.program_path, function, callsite.relative_ip + callsite.length as u32, line = line));
+                "uprobe:{}:{}+{} /@depth[tid] == {} && @start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
+                self.program_path, function, callsite.relative_ip + callsite.length as u32, frame_depth, line = line));
         }
 
         parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"); "#.into());
