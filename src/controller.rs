@@ -128,12 +128,21 @@ impl Controller {
         frame_info: &FrameInfo,
         sview: &mut views::SourceView,
     ) -> Result<(), Error> {
-        // TODO cache file contents
-        let file = std::fs::File::open(frame_info.get_source_file()).unwrap();
-        let source_code: Vec<String> = std::io::BufReader::new(file)
-            .lines()
-            .map(|l| l.unwrap())
-            .collect();
+        let source_code: Vec<String> = match std::fs::File::open(frame_info.get_source_file()) {
+            Ok(file) => {
+                // FIXME we can cache file contents
+                std::io::BufReader::new(file)
+                    .lines()
+                    .map(|l| l.unwrap())
+                    .collect()
+            }
+            Err(_) => {
+                // TODO show error and confirm user wants to display empty lines
+                // instead
+                let max_line = frame_info.max_line();
+                vec![String::new(); max_line as usize]
+            }
+        };
         views::set_source_view(
             sview,
             source_code,
@@ -144,7 +153,7 @@ impl Controller {
     }
 
     fn create_frame_info(program: &Program, function: FunctionName) -> Result<FrameInfo, Error> {
-        let location = program.get_location(program.get_address(function)).ok_or(format!("Failed to get source information corresponding to function {}, please ensure {} has debugging symbols", function, program.file_path))?;
+        let location = program.get_location(program.get_address(function)).ok_or_else(|| format!("Failed to get source information corresponding to function {}, please ensure {} has debugging symbols", function, program.file_path))?;
         let source_file = location.file.unwrap();
         let source_line = location.line.unwrap();
         log::info!(

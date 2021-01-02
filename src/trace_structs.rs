@@ -109,6 +109,14 @@ impl FrameInfo {
     pub fn get_source_line(&self) -> u32 {
         self.source_line
     }
+
+    /// Get largest line number for a callsite in this frame
+    pub fn max_line(&self) -> u32 {
+        self.line_to_callsites
+            .keys()
+            .max()
+            .map_or(self.source_line, |l| *l)
+    }
 }
 
 impl CallInstruction {
