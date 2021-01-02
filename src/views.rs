@@ -44,7 +44,7 @@ mod source_view {
         // Number of significant figures to show when formatting
         const SIGNIFICANT_FIGURES: usize = 3;
         const LATENCY_LABELS: &'static [&'static str] = &["ns", "us", "ms", "s"];
-        const FREQUENCY_LABELS: &'static [&'static str] = &["/ms", "/s", "K/s", "M/s"];
+        const FREQUENCY_LABELS: &'static [&'static str] = &["/Ks", "/s", "K/s", "M/s"];
         const PENDING_STR: &'static str = "  ---";
 
         fn format_latency(&self) -> String {
@@ -63,7 +63,8 @@ mod source_view {
             }
         }
 
-        /// Given labels representing increasing order of magniture values, format
+        /// Given labels representing increasing order of magnitude values,
+        /// format to display SIGNIFICANT_FIGURES.
         fn format(mut value: f64, labels: &'static [&'static str]) -> String {
             // TODO add tests
             let n_decimals = |value: f64| -> usize {
@@ -73,7 +74,7 @@ mod source_view {
             for (i, label) in labels.iter().enumerate() {
                 if value < 1000.0 {
                     if value == 0.0 {
-                        return format!("{}{}", value, label);
+                        return format!("0{}", label);
                     } else {
                         return format!("{:.*}{}", n_decimals(value), value, label);
                     }
