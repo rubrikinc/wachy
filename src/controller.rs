@@ -188,11 +188,22 @@ impl Controller {
                 }
             };
             let location = program.get_location(ip).unwrap();
-            assert!(location.file.unwrap() == source_file);
-            line_to_callsites
-                .entry(location.line.unwrap())
-                .or_default()
-                .push(call_instruction);
+            if location.file.unwrap() == source_file {
+                line_to_callsites
+                    .entry(location.line.unwrap())
+                    .or_default()
+                    .push(call_instruction);
+            } else {
+                // This is an inlined call. We don't know which line it
+                // corresponds to in the source file we are displaying, so we
+                // have to drop it.
+                log::trace!(
+                    "Ignoring function call from {}:{} because it is not in current source file {}",
+                    location.file.unwrap(),
+                    location.line.unwrap(),
+                    source_file
+                );
+            }
         }
 
         log::trace!("{:?}", line_to_callsites);

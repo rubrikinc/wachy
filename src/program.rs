@@ -294,6 +294,21 @@ impl Program {
         }
     }
 
+    #[allow(dead_code)]
+    fn print_frames(&self, address: u64) {
+        log::info!(
+            "{:#?}",
+            self.context
+                .find_frames(address)
+                .unwrap()
+                .collect::<Vec<addr2line::Frame<_>>>()
+                .unwrap()
+                .iter()
+                .map(|f| f.location.as_ref().unwrap().file)
+                .collect::<Vec<_>>()
+        );
+    }
+
     // Returns (address, data) for given function
     pub fn get_data(&self, function: FunctionName) -> Result<(u64, &[u8]), Error> {
         let symbol = &self.name_to_symbol.get(&function).unwrap();
