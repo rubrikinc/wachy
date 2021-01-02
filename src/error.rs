@@ -16,3 +16,9 @@ impl From<String> for Error {
         Error(err)
     }
 }
+
+impl From<&str> for Error {
+    fn from(err: &str) -> Error {
+        Error(err.to_string())
+    }
+}

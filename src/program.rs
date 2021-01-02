@@ -1,5 +1,7 @@
 use crate::error::Error;
+use addr2line::fallible_iterator::FallibleIterator;
 use addr2line::Location;
+use object::read::File;
 use object::Object;
 use object::ObjectSection;
 use object::ObjectSymbol;
@@ -34,7 +36,7 @@ impl FunctionName {
 pub struct Program {
     /// Only used when printing error messages
     pub file_path: String,
-    file: object::read::File<'static>,
+    file: File<'static>,
     name_to_symbol: HashMap<FunctionName, SymbolInfo>,
     address_to_name: HashMap<u64, FunctionName>,
     context: addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>,
@@ -75,24 +77,7 @@ impl fmt::Display for SymbolInfo {
 
 impl Program {
     pub fn new(file_path: String) -> Result<Self, Error> {
-        let file = match std::fs::File::open(&file_path) {
-            Ok(file) => file,
-            Err(err) => return Err(format!("Failed to open file {}: {}", file_path, err).into()),
-        };
-        let mmap = match unsafe { memmap::Mmap::map(&file) } {
-            Ok(mmap) => mmap,
-            Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
-        };
-        // Yeah yeah this is a terrible thing to do. I couldn't find any way to
-        // propagate appropriate lifetimes into cursive (if you know a way let
-        // me know), so it's either making this mmap static or some other
-        // struct, and doing it here simplifies LOTS of annotations.
-        let mmap = Box::leak(Box::new(mmap));
-
-        let file = match object::File::parse(&*mmap) {
-            Ok(file) => file,
-            Err(err) => return Err(format!("Failed to parse file {}: {}", file_path, err).into()),
-        };
+        let file = Program::parse(&file_path)?;
 
         // TODO fixup unwraps
         let dynamic_symbols_ranges = file
@@ -141,7 +126,27 @@ impl Program {
             .map(|(n, s)| (s.address, n.clone()))
             .collect();
 
-        let context = new_context(&file).unwrap();
+        // Try to find file containing `.debug_line` section - if it's not in
+        // the passed in binary, check debuglink.
+        let debug_file;
+        let debug_file_ref = match file.section_by_name(".debug_line") {
+            Some(_) => &file,
+            None => match Program::get_debug_file(&file) {
+                Ok(df) => {
+                    debug_file = df;
+                    &debug_file
+                }
+                Err(err) => {
+                    log::info!(
+                        "Failed to get debug file: {}, falling back to original file {}",
+                        err,
+                        file_path
+                    );
+                    &file
+                }
+            },
+        };
+        let context = new_context(debug_file_ref).unwrap();
 
         Ok(Program {
             file_path,
@@ -154,11 +159,32 @@ impl Program {
         })
     }
 
+    fn parse(file_path: &String) -> Result<File<'static>, Error> {
+        let file = match std::fs::File::open(&file_path) {
+            Ok(file) => file,
+            Err(err) => return Err(format!("Failed to open file {}: {}", file_path, err).into()),
+        };
+        let mmap = match unsafe { memmap::Mmap::map(&file) } {
+            Ok(mmap) => mmap,
+            Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
+        };
+        // Yeah yeah this is a terrible thing to do. I couldn't find any way to
+        // propagate appropriate lifetimes into cursive, so it's either making
+        // this mmap static or some other struct, and doing it here simplifies
+        // LOTS of annotations.
+        let mmap = Box::leak(Box::new(mmap));
+
+        match object::File::parse(&*mmap) {
+            Ok(file) => Ok(file),
+            Err(err) => return Err(format!("Failed to parse file {}: {}", file_path, err).into()),
+        }
+    }
+
     // `versioned_symbols_map` is a map from unversioned symbol name to the
     // versioned one. The dynamic symbols section seems to contain unversioned
     // symbol names.
     fn dynamic_symbols_map(
-        file: &object::read::File<'static>,
+        file: &File<'static>,
         versioned_symbols_map: &HashMap<String, FunctionName>,
     ) -> HashMap<u64, FunctionName> {
         let mut relocations = HashMap::new();
@@ -208,6 +234,29 @@ impl Program {
         }
         log::trace!("{:?}", map);
         map
+    }
+
+    fn get_debug_file(program_file: &File<'static>) -> Result<File<'static>, Error> {
+        let debug_link = match program_file.gnu_debuglink() {
+            Ok(link_opt) => match link_opt {
+                Some(link) => {
+                    // FIXME: we should validate checksum
+                    std::str::from_utf8(link.0).unwrap().to_string()
+                }
+                None => return Err("No debuglink found".into()),
+            },
+            Err(err) => return Err(format!("Failed to get debuglink: {}", err).into()),
+        };
+        // TODO if file doesn't exist in cwd we should probably check in
+        // original file_path's folder.
+        let df = Program::parse(&debug_link);
+        if df.is_ok() {
+            log::info!(
+                "Using debuglink file {} for address to line mappings",
+                debug_link
+            );
+        }
+        df
     }
 
     pub fn get_matches(&self, function_name: &str) -> Vec<FunctionName> {
