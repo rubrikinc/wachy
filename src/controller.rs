@@ -409,6 +409,11 @@ impl Controller {
         siv.add_global_callback(
             cursive::event::Event::Key(cursive::event::Key::Esc),
             |siv| {
+                if siv.screen().len() > 1 {
+                    // Pop anything on top of source view
+                    siv.pop_layer();
+                    return;
+                }
                 let controller = &siv.user_data::<Controller>().unwrap();
                 match controller.trace_stack.pop() {
                     Some(frame_info) => {
