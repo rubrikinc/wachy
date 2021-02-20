@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::trace_structs::{TraceInfo, TraceStack};
 use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
@@ -80,6 +81,11 @@ struct TraceCommandHandler {
     /// Used to track bpftrace pid so we can kill it when needed
     program_id: Option<u32>,
     output_processor: Option<thread::JoinHandle<()>>,
+    /// Usually bpftrace exits successfully on SIGTERM, but that's not the case
+    /// if it's killed during setup. If bpftrace has an error on exit, we use
+    /// this to track if we tried to kill it and if so ignore the error,
+    /// otherwise display an error and exit ourselves.
+    is_killing: Arc<AtomicBool>,
 }
 
 impl TraceCommandHandler {
@@ -89,6 +95,7 @@ impl TraceCommandHandler {
             trace_stack,
             program_id: None,
             output_processor: None,
+            is_killing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -103,10 +110,12 @@ impl TraceCommandHandler {
     }
 
     fn rerun_bpftrace(&mut self) {
+        self.is_killing.store(true, Ordering::Release);
         self.program_id.map(|pid| unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         });
         self.output_processor.take().map(|t| t.join());
+        self.is_killing.store(false, Ordering::Release);
 
         let (expr, counter) = self.trace_stack.get_bpftrace_expr();
         let mut program = Command::new("bpftrace")
@@ -118,6 +127,7 @@ impl TraceCommandHandler {
         self.program_id = Some(program.id());
         log::trace!("bpftrace program_id: {:?}", self.program_id);
         let tx = self.data_tx.clone();
+        let is_killing_copy = Arc::clone(&self.is_killing);
         self.output_processor = Some(thread::spawn(move || {
             let stdout = program.stdout.as_mut().unwrap();
             let stdout_reader = std::io::BufReader::new(stdout);
@@ -153,7 +163,7 @@ impl TraceCommandHandler {
                 Err(err) => log::error!("Failed to read bpftrace stderr: {:?}", err),
                 _ => (),
             }
-            if !status.success() {
+            if !status.success() && !is_killing_copy.load(Ordering::Acquire) {
                 tx.send(TraceData::FatalError(format!(
                     "bpftrace command '{}' failed, status: {:?}, stderr:\n{}",
                     expr, status, stderr
