@@ -180,16 +180,23 @@ impl Controller {
                         let call_address = instruction
                             .calc_absolute_address(ip, &instruction.operands[0])
                             .unwrap();
-                        if program.is_dynamic_symbol_address(call_address) {
-                            let function = program.get_function_for_address(call_address).unwrap();
-                            CallInstruction::dynamic_symbol(
-                                relative_ip,
-                                instruction.length,
-                                function,
-                            )
-                        } else {
-                            let function = program.get_function_for_address(call_address).unwrap();
-                            CallInstruction::function(relative_ip, instruction.length, function)
+                        match program.get_function_for_address(call_address) {
+                            Some(function) => {
+                                if program.is_dynamic_symbol_address(call_address) {
+                                    CallInstruction::dynamic_symbol(
+                                        relative_ip,
+                                        instruction.length,
+                                        function,
+                                    )
+                                } else {
+                                    CallInstruction::function(
+                                        relative_ip,
+                                        instruction.length,
+                                        function,
+                                    )
+                                }
+                            }
+                            None => CallInstruction::unknown(relative_ip, instruction.length),
                         }
                     }
                     r => CallInstruction::register(
@@ -323,6 +330,7 @@ impl Controller {
                 let direct_calls: Vec<SymbolInfo> = callsites
                     .into_iter()
                     .filter_map(|ci| match ci.instruction {
+                        InstructionType::Unknown => None,
                         InstructionType::Register(_, _) => None,
                         InstructionType::DynamicSymbol(function) => {
                             Some(controller.program.get_symbol(function))

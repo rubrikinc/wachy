@@ -63,6 +63,8 @@ pub enum InstructionType {
     /// which notably does not have E or R prefixes.
     /// Second field represents displacement within register.
     Register(String, Option<i64>),
+    /// Unknown function call - doesn't correspond to any symbols
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -148,6 +150,14 @@ impl CallInstruction {
             instruction: InstructionType::Register(register, displacement),
         }
     }
+
+    pub fn unknown(relative_ip: u32, length: u8) -> CallInstruction {
+        CallInstruction {
+            relative_ip,
+            length,
+            instruction: InstructionType::Unknown,
+}
+    }
 }
 
 impl fmt::Display for CallInstruction {
@@ -158,6 +168,7 @@ impl fmt::Display for CallInstruction {
             InstructionType::DynamicSymbol(_) => f.write_fmt(format_args!("(D) {}", i)),
             InstructionType::Function(_) => f.write_fmt(format_args!("{}", i)),
             InstructionType::Register(_, _) => f.write_fmt(format_args!("(I) register {}", i)),
+            InstructionType::Unknown => f.write_fmt(format_args!("{}", i)),
         }
     }
 }
@@ -171,6 +182,7 @@ impl fmt::Display for InstructionType {
                 Some(d) => f.write_fmt(format_args!("[{}+0x{:x}]", register, d)),
                 None => f.write_str(register),
             },
+            InstructionType::Unknown => f.write_str("(UNKNOWN)"),
         }
     }
 }
