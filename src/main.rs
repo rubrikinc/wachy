@@ -77,10 +77,12 @@ fn main() {
     // too.
     let ret = std::panic::catch_unwind(|| run());
     if let Some(msg) = PANIC_MESSAGE.lock().unwrap().clone() {
+        log::error!("{}", msg);
         eprintln!("Error: {}", msg);
         std::process::exit(1);
     }
     if let Ok(Err(err)) = ret {
+        log::error!("{}", err);
         eprintln!("Error: {}", err);
         std::process::exit(1);
     };

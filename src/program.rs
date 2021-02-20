@@ -75,6 +75,10 @@ impl fmt::Display for SymbolInfo {
     }
 }
 
+fn should_log_verbose() -> bool {
+    std::env::var("WACHY_PROGRAM_TRACE").unwrap_or(String::new()) == "1"
+}
+
 impl Program {
     pub fn new(file_path: String) -> Result<Self, Error> {
         let file = Program::parse(&file_path)?;
@@ -111,7 +115,9 @@ impl Program {
                 })
             })
             .flat_map(|x| {
-                log::trace!("{:?}", x);
+                if should_log_verbose() {
+                    log::trace!("{:?}", x);
+                }
                 x
             })
             .collect();
@@ -195,7 +201,9 @@ impl Program {
                 let symbol = dynamic_symbols.symbol_by_index(index).unwrap();
                 if symbol.kind() == object::SymbolKind::Text {
                     if let Ok(name) = symbol.name() {
-                        log::trace!("Relocation {:x} = {}", address, name);
+                        if should_log_verbose() {
+                            log::trace!("Relocation {:x} = {}", address, name);
+                        }
                         relocations.insert(address, name);
                     }
                 }
@@ -216,7 +224,9 @@ impl Program {
                         let jump_address = instruction
                             .calc_absolute_address(ip, &instruction.operands[0])
                             .unwrap();
-                        log::trace!("PLT {:#x?} -> GOT {:#x?}", ip, jump_address);
+                        if should_log_verbose() {
+                            log::trace!("PLT {:#x?} -> GOT {:#x?}", ip, jump_address);
+                        }
                         // Ignore expected jumps to PLT0 - figure A-9 in
                         // https://refspecs.linuxfoundation.org/elf/elf.pdf
                         if let Some(&name) = relocations.get(&jump_address) {
