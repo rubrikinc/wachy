@@ -167,6 +167,7 @@ impl Controller {
         let decoder = program::create_decoder();
 
         let mut line_to_callsites = HashMap::<u32, Vec<CallInstruction>>::new();
+        let mut unattached_callsites = Vec::<CallInstruction>::new();
 
         for (instruction, ip) in
             program::get_instructions_with_mnemonic(&decoder, start_address, code, Mnemonic::CALL)
@@ -224,14 +225,14 @@ impl Controller {
                     .push(call_instruction);
             } else {
                 // This is an inlined call. We don't know which line it
-                // corresponds to in the source file we are displaying, so we
-                // have to drop it.
+                // corresponds to in the source file we are displaying.
                 log::trace!(
-                    "Ignoring function call from {}:{} because it is not in current source file {}",
+                    "Not displaying function call from {}:{} because it is not in current source file {}",
                     location.file.unwrap(),
                     location.line.unwrap(),
                     source_file
                 );
+                unattached_callsites.push(call_instruction);
             }
         }
 
@@ -241,6 +242,7 @@ impl Controller {
             String::from(source_file),
             source_line,
             line_to_callsites,
+            unattached_callsites,
         );
 
         Ok(frame_info)
@@ -309,6 +311,49 @@ impl Controller {
             }
         });
 
+        siv.add_global_callback('X', |siv| {
+            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+            let line = sview.row().unwrap() as u32 + 1;
+            if trace_stack.remove_callsite(line) {
+                Self::set_line_state(
+                    &mut *sview,
+                    line,
+                    TraceState::Untraced,
+                    TraceState::Untraced,
+                );
+                return;
+            }
+
+            let callsites = trace_stack.get_unattached_callsites();
+            if callsites.is_empty() {
+                let function = trace_stack.get_current_function();
+                siv.add_layer(views::new_dialog(&format!(
+                    "No unattached calls found in {}",
+                    function
+                )));
+                return;
+            }
+            let search_view = views::new_search_view(
+                siv,
+                "Select the call to trace",
+                move |_siv, search, n_results| views::rank_fn(callsites.iter(), search, n_results),
+                move |siv: &mut Cursive, ci: &CallInstruction| {
+                    let mut sview =
+                        siv.find_name::<views::SourceView>("source_view").unwrap();
+                    Self::set_line_state(
+                        &mut *sview,
+                        line,
+                        TraceState::Pending,
+                        TraceState::Pending,
+                    );
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    controller.trace_stack.add_callsite(line, ci.clone());
+                },
+            );
+            siv.add_layer(search_view);
+        });
+
         siv.add_global_callback(
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
@@ -341,11 +386,9 @@ impl Controller {
                     })
                     .map(|si| si.clone())
                     .collect();
-                // TODO allow entering any fn if dynamic call
                 let num_indirect_calls = num_callsites - direct_calls.len();
 
                 if num_callsites > 1 || num_indirect_calls > 0 {
-                    // TODO we should be searching functions not callsites
                     let search_view = views::new_search_view(
                         siv,
                         "Select the call to enter",

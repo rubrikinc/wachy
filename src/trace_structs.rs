@@ -47,6 +47,9 @@ pub struct FrameInfo {
     source_line: u32,
     /// Map from source line numbers to call functions on that line
     line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
+    /// List of inlined call functions that are do not have source code in this
+    /// file.
+    unattached_callsites: Vec<CallInstruction>,
     /// Function calls that are actively traced. Currently we only allow one per
     /// line.
     traced_callsites: HashMap<u32, CallInstruction>,
@@ -89,12 +92,14 @@ impl FrameInfo {
         source_file: String,
         source_line: u32,
         line_to_callsites: HashMap<u32, Vec<CallInstruction>>,
+        unattached_callsites: Vec<CallInstruction>,
     ) -> FrameInfo {
         FrameInfo {
             function,
             source_file,
             source_line,
             line_to_callsites,
+            unattached_callsites,
             traced_callsites: HashMap::new(),
         }
     }
@@ -156,7 +161,7 @@ impl CallInstruction {
             relative_ip,
             length,
             instruction: InstructionType::Unknown,
-}
+        }
     }
 }
 
@@ -219,15 +224,24 @@ impl TraceStack {
         callsites
     }
 
+    pub fn get_unattached_callsites(&self) -> Vec<CallInstruction> {
+        let guard = self.stack.lock().unwrap();
+        let callsites = guard.frames.last().unwrap().unattached_callsites.clone();
+        log::debug!("{:?}", callsites);
+        callsites
+    }
+
     /// Note: does not update counter as any existing trace data is presumed to still be valid
     pub fn add_callsite(&self, line: u32, ci: CallInstruction) {
         let mut guard = self.stack.lock().unwrap();
         let top_frame = guard.frames.last_mut().unwrap();
-        assert!(top_frame
-            .line_to_callsites
-            .get(&line)
-            .unwrap()
-            .contains(&ci));
+        assert!(
+            top_frame
+                .line_to_callsites
+                .get(&line)
+                .map_or(false, |cis| cis.contains(&ci))
+                || top_frame.unattached_callsites.contains(&ci)
+        );
         top_frame.traced_callsites.insert(line, ci);
         guard.tx.send(()).unwrap();
     }
