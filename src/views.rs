@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 use cursive::view::{Nameable, Resizable};
-use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, SelectView};
+use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, ScrollView, SelectView};
 use cursive::Cursive;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -177,7 +177,7 @@ pub fn set_source_view(
 
 pub type SearchView = ResizedView<Dialog>;
 
-const SEARCH_VIEW_WIDTH: usize = 40;
+const SEARCH_VIEW_WIDTH: usize = 70;
 const SEARCH_VIEW_HEIGHT: usize = 8;
 
 pub trait Label {
@@ -239,15 +239,19 @@ where
     let results = get_top_results_fn(siv, "", SEARCH_VIEW_HEIGHT);
     display_results(&mut select_view, results);
 
-    let select_view = select_view
-        .on_submit(move |siv: &mut Cursive, sel: &Option<T>| {
-            if let Some(item) = sel {
-                siv.pop_layer();
-                cb(siv, item);
-            }
-        })
-        .with_name(&name)
-        .fixed_size((SEARCH_VIEW_WIDTH, 8));
+    let select_view = ScrollView::new(
+        select_view
+            .on_submit(move |siv: &mut Cursive, sel: &Option<T>| {
+                if let Some(item) = sel {
+                    siv.pop_layer();
+                    cb(siv, item);
+                }
+            })
+            .with_name(&name)
+            .min_width(SEARCH_VIEW_WIDTH - 2), // ScrollView adds 2 character border
+    )
+    .scroll_x(true)
+    .fixed_size((SEARCH_VIEW_WIDTH, 8));
 
     let update_edit_view = move |siv: &mut Cursive, search: &str, _| {
         let mut select_view = siv.find_name::<SelectView<Option<T>>>(&name).unwrap();
