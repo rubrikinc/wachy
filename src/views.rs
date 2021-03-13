@@ -327,4 +327,16 @@ mod tests {
         siv.add_layer(search_view);
         siv.run();
     }
+
+    #[test]
+    #[ignore]
+    /// Very crude benchmark for the ranking function
+    fn bench_rank_fn() {
+        let program = crate::program::Program::new("program".to_string()).unwrap();
+        println!("Loaded");
+        let now = std::time::Instant::now();
+        let results = rank_fn(program.symbols_iterator(), "test", 10);
+        println!("{:#?}", results);
+        println!("{:#?}", now.elapsed());
+    }
 }
