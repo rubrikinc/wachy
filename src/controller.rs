@@ -1,8 +1,9 @@
 use crate::error::Error;
+use crate::events::Event;
 use crate::program;
 use crate::program::{FunctionName, Program};
 use crate::trace_structs::{CallInstruction, FrameInfo, InstructionType, TraceStack};
-use crate::tracer::{TraceData, Tracer};
+use crate::tracer::Tracer;
 use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
@@ -30,14 +31,13 @@ impl Controller {
         let mut sview = views::new_source_view();
         let frame_info = Controller::setup_function(&program, function, &mut sview)?;
 
-        let (stack_tx, stack_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
             frame_info,
-            stack_tx,
+            tx.clone(),
         ));
-        let (trace_tx, trace_rx) = mpsc::channel();
-        let tracer = Tracer::new(Arc::clone(&trace_stack), trace_tx)?;
+        let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
 
         let mut siv = cursive::default();
         siv.add_layer(
@@ -58,20 +58,10 @@ impl Controller {
         while siv.is_running() {
             siv.step();
 
-            match stack_rx.try_recv() {
-                Ok(_) => {
-                    siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
-                }
+            match rx.try_recv() {
+                Ok(data) => Controller::handle_event(&mut siv, data)?,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(format!("Unexpected error: trace channel disconnected").into())
-                }
-                Err(mpsc::TryRecvError::Empty) => (),
-            }
-
-            match trace_rx.try_recv() {
-                Ok(data) => Controller::handle_trace_data(&mut siv, data)?,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(format!("Unexpected error: trace channel disconnected").into())
+                    return Err(format!("Unexpected error: channel disconnected").into())
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
             }
@@ -79,13 +69,13 @@ impl Controller {
         Ok(())
     }
 
-    fn handle_trace_data(siv: &mut Cursive, data: TraceData) -> Result<(), Error> {
-        match data {
-            TraceData::FatalError(message) => {
+    fn handle_event(siv: &mut Cursive, event: Event) -> Result<(), Error> {
+        match event {
+            Event::FatalTraceError(message) => {
                 siv.quit();
                 Err(message.into())
             }
-            TraceData::Data(data) => {
+            Event::TraceData(data) => {
                 // Ignore any data that doesn't correspond to current view. The trace command should
                 // already be in the process of being updated.
                 if !siv
@@ -109,6 +99,10 @@ impl Controller {
                     }
                 });
                 siv.refresh();
+                Ok(())
+            }
+            Event::TraceCommandModified => {
+                siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
                 Ok(())
             }
         }

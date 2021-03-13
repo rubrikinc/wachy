@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::trace_structs::{TraceInfo, TraceStack};
+use crate::events::Event;
+use crate::trace_structs::TraceStack;
 use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,18 +19,12 @@ enum TraceCommand {
     Exit,
 }
 
-pub enum TraceData {
-    /// Includes error message. The program should quit on receiving this.
-    FatalError(String),
-    Data(TraceInfo),
-}
-
 impl Tracer {
     /// tx is used to transmit trace data in response to the requests given to
     /// this class.
     pub fn new(
         trace_stack: Arc<TraceStack>,
-        data_tx: mpsc::Sender<TraceData>,
+        data_tx: mpsc::Sender<Event>,
     ) -> Result<Tracer, Error> {
         match Command::new("bpftrace").arg("--version").output() {
             Ok(output) => log::trace!("bpftrace version: {:?}", output),
@@ -76,7 +71,7 @@ impl Drop for Tracer {
 
 /// Polls and reacts to issued commands
 struct TraceCommandHandler {
-    data_tx: mpsc::Sender<TraceData>,
+    data_tx: mpsc::Sender<Event>,
     trace_stack: Arc<TraceStack>,
     /// Used to track bpftrace pid so we can kill it when needed
     program_id: Option<u32>,
@@ -89,7 +84,7 @@ struct TraceCommandHandler {
 }
 
 impl TraceCommandHandler {
-    fn new(trace_stack: Arc<TraceStack>, data_tx: mpsc::Sender<TraceData>) -> TraceCommandHandler {
+    fn new(trace_stack: Arc<TraceStack>, data_tx: mpsc::Sender<Event>) -> TraceCommandHandler {
         TraceCommandHandler {
             data_tx,
             trace_stack,
@@ -145,7 +140,7 @@ impl TraceCommandHandler {
                 let parsed = TraceStack::parse(&line, counter);
                 let parsed = match parsed {
                     Err(err) => {
-                        tx.send(TraceData::FatalError(format!(
+                        tx.send(Event::FatalTraceError(format!(
                             "Failed to parse bpftrace output '{}': {:?}",
                             line, err
                         )))
@@ -154,7 +149,7 @@ impl TraceCommandHandler {
                     }
                     Ok(parsed) => parsed,
                 };
-                tx.send(TraceData::Data(parsed)).unwrap();
+                tx.send(Event::TraceData(parsed)).unwrap();
             }
             let status = program.wait().unwrap();
             log::trace!("Done, status: {}!", status);
@@ -164,7 +159,7 @@ impl TraceCommandHandler {
                 _ => (),
             }
             if !status.success() && !is_killing_copy.load(Ordering::Acquire) {
-                tx.send(TraceData::FatalError(format!(
+                tx.send(Event::FatalTraceError(format!(
                     "bpftrace command '{}' failed, status: {:?}, stderr:\n{}",
                     expr, status, stderr
                 )))

@@ -1,3 +1,4 @@
+use crate::events::{Event, TraceCumulative, TraceInfo};
 use crate::program::FunctionName;
 use std::collections::HashMap;
 use std::fmt;
@@ -5,23 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::Duration;
-
-/// Format in which trace data is passed back
-pub struct TraceInfo {
-    /// Counter corresponding to when bpftrace command was last updated
-    pub counter: u64,
-    /// Time for which current trace has been running
-    pub time: Duration,
-    /// Map from line to cumulative values
-    pub traces: HashMap<u32, TraceCumulative>,
-}
-
-pub struct TraceCumulative {
-    /// Cumulative time spent
-    pub duration: Duration,
-    /// Cumulative count
-    pub count: u64,
-}
 
 /// Manages the stack of functions being traced and helps generate appropriate
 /// bpftrace programs.
@@ -35,9 +19,9 @@ pub struct TraceStack {
 pub struct Frames {
     /// Guaranteed to be non-empty
     frames: Vec<FrameInfo>,
-    /// Gets notified whenever the stack is modified (i.e. get_bpftrace_expr
-    /// would change).
-    tx: Sender<()>,
+    /// Gets notified whenever the stack is modified (i.e. trace command
+    /// get_bpftrace_expr would change).
+    tx: Sender<Event>,
 }
 
 #[derive(Debug, Clone)]
@@ -193,7 +177,7 @@ impl fmt::Display for InstructionType {
 }
 
 impl TraceStack {
-    pub fn new(program_path: String, frame: FrameInfo, tx: Sender<()>) -> TraceStack {
+    pub fn new(program_path: String, frame: FrameInfo, tx: Sender<Event>) -> TraceStack {
         let stack = Mutex::new(Frames {
             frames: vec![frame],
             tx,
@@ -243,7 +227,7 @@ impl TraceStack {
                 || top_frame.unattached_callsites.contains(&ci)
         );
         top_frame.traced_callsites.insert(line, ci);
-        guard.tx.send(()).unwrap();
+        guard.tx.send(Event::TraceCommandModified).unwrap();
     }
 
     /// Remove traced callsite, returning true if one exists corresponding to this line.
@@ -252,7 +236,7 @@ impl TraceStack {
         let top_frame = guard.frames.last_mut().unwrap();
         if top_frame.traced_callsites.remove(&line).is_some() {
             self.counter.fetch_add(1, Ordering::Release);
-            guard.tx.send(()).unwrap();
+            guard.tx.send(Event::TraceCommandModified).unwrap();
             true
         } else {
             false
@@ -264,7 +248,7 @@ impl TraceStack {
         // TODO prevent recursive (or do we need to?)
         guard.frames.push(frame);
         self.counter.fetch_add(1, Ordering::Release);
-        guard.tx.send(()).unwrap();
+        guard.tx.send(Event::TraceCommandModified).unwrap();
     }
 
     /// Pops the current frame, if it is not the last one. Returns the new top
@@ -278,7 +262,7 @@ impl TraceStack {
         guard.frames.pop();
         let frame = (*guard.frames.last().unwrap()).clone();
         self.counter.fetch_add(1, Ordering::Release);
-        guard.tx.send(()).unwrap();
+        guard.tx.send(Event::TraceCommandModified).unwrap();
         Some(frame)
     }
 
