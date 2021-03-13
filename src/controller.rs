@@ -287,12 +287,9 @@ impl Controller {
                 return;
             }
             if callsites.len() > 1 {
-                let search_view = views::new_search_view(
-                    siv,
+                let search_view = views::new_simple_search_view(
                     "Select the call to trace",
-                    move |_siv, search, n_results| {
-                        views::rank_fn(callsites.iter(), search, n_results)
-                    },
+                    callsites,
                     move |siv: &mut Cursive, ci: &CallInstruction| {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
                         Self::set_line_state(
@@ -335,13 +332,11 @@ impl Controller {
                 )));
                 return;
             }
-            let search_view = views::new_search_view(
-                siv,
+            let search_view = views::new_simple_search_view(
                 "Select the call to trace",
-                move |_siv, search, n_results| views::rank_fn(callsites.iter(), search, n_results),
+                callsites,
                 move |siv: &mut Cursive, ci: &CallInstruction| {
-                    let mut sview =
-                        siv.find_name::<views::SourceView>("source_view").unwrap();
+                    let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
                     Self::set_line_state(
                         &mut *sview,
                         line,
@@ -390,26 +385,25 @@ impl Controller {
                 let num_indirect_calls = num_callsites - direct_calls.len();
 
                 if num_callsites > 1 || num_indirect_calls > 0 {
+                    let mut initial_results = views::rank_fn(direct_calls.iter(), "", usize::MAX);
+                    if num_indirect_calls > 0 {
+                        let call_string = if num_indirect_calls == 1 {
+                            "1 indirect call".to_string()
+                        } else {
+                            format!("{} indirect calls", num_indirect_calls)
+                        };
+                        initial_results
+                            .insert(0, (format!("{} (type to search)", call_string), None));
+                    }
                     let search_view = views::new_search_view(
-                        siv,
                         "Select the call to enter",
-                        move |siv: &mut Cursive, search: &str, mut n_results: usize| {
+                        initial_results.clone(),
+                        move |siv: &mut Cursive,
+                              view_name: &str,
+                              search: &str,
+                              n_results: usize| {
                             if search.is_empty() {
-                                if num_indirect_calls > 0 {
-                                    n_results -= 1;
-                                }
-                                let mut results =
-                                    views::rank_fn(direct_calls.iter(), search, n_results);
-                                if num_indirect_calls > 0 {
-                                    let call_string = if num_indirect_calls == 1 {
-                                        "1 indirect call".to_string()
-                                    } else {
-                                        format!("{} indirect calls", num_indirect_calls)
-                                    };
-                                    results
-                                        .push((format!("{} (type to search)", call_string), None));
-                                }
-                                results
+                                views::update_search_view(siv, view_name, initial_results.clone());
                             } else {
                                 let controller = &siv.user_data::<Controller>().unwrap();
                                 let mut it: Box<dyn Iterator<Item = &SymbolInfo>> =
@@ -417,7 +411,8 @@ impl Controller {
                                 if num_indirect_calls > 0 {
                                     it = Box::new(it.chain(controller.program.symbols_iterator()));
                                 }
-                                views::rank_fn(it, search, n_results)
+                                let results = views::rank_fn(it, search, n_results);
+                                views::update_search_view(siv, view_name, results);
                             }
                         },
                         move |siv: &mut Cursive, symbol: &SymbolInfo| {

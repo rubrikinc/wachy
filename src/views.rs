@@ -206,45 +206,37 @@ where
     .collect()
 }
 
-/// `title` must be unique (it is used in the name of the view).
+/// `title` must be unique (it is used in the name of the view)
 pub fn new_search_view<T, F, G>(
-    siv: &mut Cursive,
     title: &str,
-    get_top_results_fn: F,
-    callback: G,
+    initial_results: Vec<(String, Option<T>)>,
+    edit_search_fn: F,
+    submit_fn: G,
 ) -> SearchView
 where
-    // Given search string and (max) number of results, return the top results
-    // in the form (display_string, item). An item may be None in which case selecting it
-    // will be a no-op. It's recommended to use rank_fn.
-    F: Fn(&mut Cursive, &str, usize) -> Vec<(String, Option<T>)> + 'static,
+    // Parameters are search view name, search string, and (max) number of
+    // results.
+    F: Fn(&mut Cursive, &str, &str, usize) + 'static,
     T: 'static,
     G: Fn(&mut Cursive, &T) + 'static,
 {
-    let cb = Rc::new(callback);
-    let cb_copy = Rc::clone(&cb);
+    let submit_cb = Rc::new(submit_fn);
+    let submit_cb_copy = Rc::clone(&submit_cb);
     let name = format!("select_{}", title);
     let name_copy = name.clone();
 
-    // SelectView value of None represents ExtraItems::summary which is a no-op
-    // to hit enter on.
+    // SelectView value of None will be a no-op to hit enter on.
     let mut select_view = SelectView::<Option<T>>::new();
-    let display_results = |select_view: &mut SelectView<Option<T>>,
-                           results: Vec<(String, Option<T>)>| {
-        for (label, value) in results {
-            select_view.add_item(label, value);
-        }
-    };
-    // TODO we should add more and allow scrolling?
-    let results = get_top_results_fn(siv, "", SEARCH_VIEW_HEIGHT);
-    display_results(&mut select_view, results);
+    for (label, value) in initial_results {
+        select_view.add_item(label, value);
+    }
 
     let select_view = ScrollView::new(
         select_view
             .on_submit(move |siv: &mut Cursive, sel: &Option<T>| {
                 if let Some(item) = sel {
                     siv.pop_layer();
-                    cb(siv, item);
+                    submit_cb(siv, item);
                 }
             })
             .with_name(&name)
@@ -254,10 +246,8 @@ where
     .fixed_size((SEARCH_VIEW_WIDTH, 8));
 
     let update_edit_view = move |siv: &mut Cursive, search: &str, _| {
-        let mut select_view = siv.find_name::<SelectView<Option<T>>>(&name).unwrap();
-        select_view.clear();
-        let results = get_top_results_fn(siv, search, SEARCH_VIEW_HEIGHT);
-        display_results(&mut select_view, results);
+        // TODO we should add more results and allow scrolling?
+        edit_search_fn(siv, &name, search, SEARCH_VIEW_HEIGHT);
     };
     let edit_view = EditView::new()
         .filler(" ")
@@ -267,7 +257,7 @@ where
             if let Some(sel) = select_view.selection() {
                 if let Some(item) = sel.borrow() {
                     siv.pop_layer();
-                    cb_copy(siv, item);
+                    submit_cb_copy(siv, item);
                 }
             }
         })
@@ -277,6 +267,40 @@ where
     Dialog::around(LinearLayout::vertical().child(edit_view).child(select_view))
         .title(title)
         .fixed_width(SEARCH_VIEW_WIDTH)
+}
+
+pub fn update_search_view<T>(
+    siv: &mut Cursive,
+    search_view_name: &str,
+    results: Vec<(String, Option<T>)>,
+) where
+    T: 'static,
+{
+    let mut select_view = siv
+        .find_name::<SelectView<Option<T>>>(&search_view_name)
+        .unwrap();
+    select_view.clear();
+    for (label, value) in results {
+        select_view.add_item(label, value);
+    }
+}
+
+/// Convenience wrapper for new_search_view with results searched using rank_fn
+pub fn new_simple_search_view<T, G>(title: &str, items: Vec<T>, submit_fn: G) -> SearchView
+where
+    T: Clone + std::fmt::Display + Label + 'static,
+    G: Fn(&mut Cursive, &T) + 'static,
+{
+    let initial_results = rank_fn(items.iter(), "", usize::MAX);
+    new_search_view(
+        title,
+        initial_results,
+        move |siv, view_name, search, n_results| {
+            let results = rank_fn(items.iter(), search, n_results);
+            update_search_view(siv, view_name, results);
+        },
+        submit_fn,
+    )
 }
 
 /// Simple dialog with single confirmation button that closes it
@@ -313,17 +337,12 @@ mod tests {
             "Avocados",
         ];
 
-        let callback = |siv: &mut Cursive, selection: &&str| {
+        let submit_fn = |siv: &mut Cursive, selection: &&str| {
             siv.add_layer(
                 Dialog::text(format!("You selected: {}", selection)).button("Quit", Cursive::quit),
             );
         };
-        let search_view = new_search_view(
-            &mut siv,
-            "test",
-            move |_siv, search, n_results| rank_fn(items.iter(), search, n_results),
-            callback,
-        );
+        let search_view = new_simple_search_view("test", items, submit_fn);
         siv.add_layer(search_view);
         siv.run();
     }
