@@ -2,6 +2,8 @@ use crate::error::Error;
 use crate::events::Event;
 use crate::program;
 use crate::program::{FunctionName, Program};
+use crate::search;
+use crate::search::Searcher;
 use crate::trace_structs::{CallInstruction, FrameInfo, InstructionType, TraceStack};
 use crate::tracer::Tracer;
 use crate::views;
@@ -18,6 +20,7 @@ use zydis::enums::generated::{Mnemonic, Register};
 
 pub struct Controller {
     program: Program,
+    searcher: Searcher,
     tracer: Tracer,
     trace_stack: Arc<TraceStack>,
 }
@@ -37,7 +40,9 @@ impl Controller {
             frame_info,
             tx.clone(),
         ));
-        let tracer = Tracer::new(Arc::clone(&trace_stack), tx)?;
+        let tracer = Tracer::new(Arc::clone(&trace_stack), tx.clone())?;
+
+        let searcher = Searcher::new(tx, program.symbols_generator());
 
         let mut siv = cursive::default();
         siv.add_layer(
@@ -49,6 +54,7 @@ impl Controller {
 
         let controller = Controller {
             program,
+            searcher,
             tracer,
             trace_stack,
         };
@@ -76,8 +82,9 @@ impl Controller {
                 Err(message.into())
             }
             Event::TraceData(data) => {
-                // Ignore any data that doesn't correspond to current view. The trace command should
-                // already be in the process of being updated.
+                // Ignore any data that doesn't correspond to current view. The
+                // trace command would already be in the process of being
+                // updated.
                 if !siv
                     .user_data::<Controller>()
                     .unwrap()
@@ -103,6 +110,18 @@ impl Controller {
             }
             Event::TraceCommandModified => {
                 siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
+                Ok(())
+            }
+            Event::SearchResults(counter, view_name, results) => {
+                if !siv
+                    .user_data::<Controller>()
+                    .unwrap()
+                    .searcher
+                    .is_counter_current(counter)
+                {
+                    return Ok(());
+                }
+                views::update_search_view(siv, &view_name, results);
                 Ok(())
             }
         }
@@ -347,9 +366,11 @@ impl Controller {
         siv.add_global_callback(
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
-                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let sview = siv.find_name::<views::SourceView>("source_view").unwrap();
                 let line = sview.row().unwrap() as u32 + 1;
-                let controller = &siv.user_data::<Controller>().unwrap();
+                // Allow `"source_view"` to be mutably found again below
+                std::mem::drop(sview);
+                let controller = siv.user_data::<Controller>().unwrap();
                 let trace_stack = &controller.trace_stack;
                 let callsites = trace_stack.get_callsites(line);
                 if callsites.is_empty() {
@@ -378,9 +399,35 @@ impl Controller {
                     .collect();
                 let num_indirect_calls = num_callsites - direct_calls.len();
 
+                let submit_fn = move |siv: &mut Cursive, symbol: &SymbolInfo| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    // TODO cancel any pending searches
+                    if controller.program.is_dynamic_symbol(symbol) {
+                        // TODO show error for dyn fn
+                    } else {
+                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        // Reset lifetime of `controller` to avoid overlapping
+                        // mutable borrows of `siv`.
+                        let controller = siv.user_data::<Controller>().unwrap();
+                        // TODO don't expect
+                        let frame_info = Controller::setup_function(
+                            &controller.program,
+                            symbol.name,
+                            &mut *sview,
+                        )
+                        .expect(&format!("Error setting up function {}", symbol.name));
+                        controller.trace_stack.push(frame_info);
+                    }
+                    // TODO show error for dyn fn
+                };
+
                 if num_callsites > 1 || num_indirect_calls > 0 {
-                    let mut initial_results = views::rank_fn(direct_calls.iter(), "", usize::MAX);
-                    if num_indirect_calls > 0 {
+                    let title = "Select the call to enter";
+                    let search_view = if num_indirect_calls == 0 {
+                        views::new_simple_search_view(title, direct_calls, submit_fn)
+                    } else {
+                        let mut initial_results =
+                            search::rank_fn(direct_calls.iter(), "", usize::MAX);
                         let call_string = if num_indirect_calls == 1 {
                             "1 indirect call".to_string()
                         } else {
@@ -388,61 +435,25 @@ impl Controller {
                         };
                         initial_results
                             .insert(0, (format!("{} (type to search)", call_string), None));
-                    }
-                    let search_view = views::new_search_view(
-                        "Select the call to enter",
-                        initial_results.clone(),
-                        move |siv: &mut Cursive,
-                              view_name: &str,
-                              search: &str,
-                              n_results: usize| {
-                            if search.is_empty() {
-                                views::update_search_view(siv, view_name, initial_results.clone());
-                            } else {
-                                let controller = &siv.user_data::<Controller>().unwrap();
-                                let mut it: Box<dyn Iterator<Item = &SymbolInfo>> =
-                                    Box::new(direct_calls.iter());
-                                if num_indirect_calls > 0 {
-                                    it = Box::new(it.chain(controller.program.symbols_iterator()));
-                                }
-                                let results = views::rank_fn(it, search, n_results);
-                                views::update_search_view(siv, view_name, results);
-                            }
-                        },
-                        move |siv: &mut Cursive, symbol: &SymbolInfo| {
-                            let controller = &siv.user_data::<Controller>().unwrap();
-                            if controller.program.is_dynamic_symbol(symbol) {
-                                // TODO show error for dyn fn
-                            } else {
-                                let mut sview =
-                                    siv.find_name::<views::SourceView>("source_view").unwrap();
+                        controller
+                            .searcher
+                            .setup_search(initial_results.clone(), direct_calls);
+                        views::new_search_view(
+                            title,
+                            initial_results,
+                            move |siv: &mut Cursive,
+                                  view_name: &str,
+                                  search: &str,
+                                  n_results: usize| {
                                 let controller = siv.user_data::<Controller>().unwrap();
-                                // TODO don't expect
-                                let frame_info = Controller::setup_function(
-                                    &controller.program,
-                                    symbol.name,
-                                    &mut *sview,
-                                )
-                                .expect(&format!("Error setting up function {}", symbol.name));
-                                controller.trace_stack.push(frame_info);
-                            }
-                            // TODO show error for dyn fn
-                        },
-                    );
+                                controller.searcher.search(view_name, search, n_results);
+                            },
+                            submit_fn,
+                        )
+                    };
                     siv.add_layer(search_view);
                 } else {
-                    let symbol = &direct_calls[0];
-                    if controller.program.is_dynamic_symbol(symbol) {
-                        // TODO show error for dyn fn
-                    } else {
-                        let frame_info = Controller::setup_function(
-                            &controller.program,
-                            symbol.name,
-                            &mut *sview,
-                        )
-                        .expect(&format!("Error setting up function {}", symbol.name));
-                        trace_stack.push(frame_info);
-                    }
+                    submit_fn(siv, &direct_calls[0]);
                 }
             },
         );
@@ -455,7 +466,7 @@ impl Controller {
                     siv.pop_layer();
                     return;
                 }
-                let controller = &siv.user_data::<Controller>().unwrap();
+                let controller = siv.user_data::<Controller>().unwrap();
                 match controller.trace_stack.pop() {
                     Some(frame_info) => {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
@@ -468,12 +479,12 @@ impl Controller {
     }
 }
 
-impl views::Label for CallInstruction {
+impl search::Label for CallInstruction {
     fn label(&self) -> Cow<str> {
         Cow::Owned(self.to_string())
     }
 }
-impl views::Label for program::SymbolInfo {
+impl search::Label for program::SymbolInfo {
     fn label(&self) -> Cow<str> {
         Cow::Borrowed(self.as_ref())
     }

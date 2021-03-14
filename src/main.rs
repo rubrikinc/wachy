@@ -2,6 +2,7 @@ mod controller;
 mod error;
 mod events;
 mod program;
+mod search;
 mod trace_structs;
 mod tracer;
 mod views;

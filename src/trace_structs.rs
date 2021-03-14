@@ -362,6 +362,6 @@ impl TraceStack {
     }
 
     pub fn is_counter_current(&self, counter: u64) -> bool {
-        return counter == self.counter.load(Ordering::Acquire);
+        counter == self.counter.load(Ordering::Acquire)
     }
 }

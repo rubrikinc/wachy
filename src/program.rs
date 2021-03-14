@@ -7,7 +7,7 @@ use object::ObjectSection;
 use object::ObjectSymbol;
 use object::ObjectSymbolTable;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 use std::fmt;
 use std::sync::Arc;
 use zydis::ffi::Decoder;
@@ -37,13 +37,25 @@ pub struct Program {
     /// Only used when printing error messages
     pub file_path: String,
     file: File<'static>,
-    name_to_symbol: HashMap<FunctionName, SymbolInfo>,
+    name_to_symbol: Arc<HashMap<FunctionName, SymbolInfo>>,
     address_to_name: HashMap<u64, FunctionName>,
     context: addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>,
     // (start_address, size) of runtime addresses for dynamic symbols (functions
     // loaded from shared libraries)
     dynamic_symbols_ranges: Vec<std::ops::Range<u64>>,
     dynamic_symbols_map: HashMap<u64, FunctionName>,
+}
+
+pub struct SymbolsGenerator {
+    name_to_symbol: Arc<HashMap<FunctionName, SymbolInfo>>,
+}
+
+impl<'a> IntoIterator for &'a SymbolsGenerator {
+    type Item = &'a SymbolInfo;
+    type IntoIter = hash_map::Values<'a, FunctionName, SymbolInfo>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.name_to_symbol.values()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -157,7 +169,7 @@ impl Program {
         Ok(Program {
             file_path,
             file,
-            name_to_symbol,
+            name_to_symbol: Arc::new(name_to_symbol),
             address_to_name,
             context,
             dynamic_symbols_ranges,
@@ -271,7 +283,7 @@ impl Program {
 
     pub fn get_matches(&self, function_name: &str) -> Vec<FunctionName> {
         let mut matches = Vec::new();
-        for (name, symbol) in &self.name_to_symbol {
+        for (name, symbol) in &*self.name_to_symbol {
             let display_name = symbol.as_ref();
             if display_name == function_name {
                 return vec![*name];
@@ -345,8 +357,10 @@ impl Program {
         &self.name_to_symbol.get(&function).unwrap()
     }
 
-    pub fn symbols_iterator(&self) -> std::collections::hash_map::Values<FunctionName, SymbolInfo> {
-        self.name_to_symbol.values()
+    pub fn symbols_generator(&self) -> SymbolsGenerator {
+        SymbolsGenerator {
+            name_to_symbol: Arc::clone(&self.name_to_symbol),
+        }
     }
 
     pub fn get_function_for_address(&self, address: u64) -> Option<FunctionName> {

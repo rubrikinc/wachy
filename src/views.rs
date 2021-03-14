@@ -1,11 +1,9 @@
+use crate::search;
 use core::cmp::Ordering;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, ScrollView, SelectView};
 use cursive::Cursive;
-use fuzzy_matcher::skim::SkimMatcherV2;
-use fuzzy_matcher::FuzzyMatcher;
-use itertools::Itertools;
-use std::borrow::{Borrow, Cow};
+use std::borrow::Borrow;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug)]
@@ -180,33 +178,9 @@ pub type SearchView = ResizedView<Dialog>;
 const SEARCH_VIEW_WIDTH: usize = 70;
 const SEARCH_VIEW_HEIGHT: usize = 8;
 
-pub trait Label {
-    fn label(&self) -> Cow<str>;
-}
-
-impl Label for &str {
-    fn label(&self) -> Cow<str> {
-        Cow::Borrowed(self)
-    }
-}
-
-pub fn rank_fn<'a, T, I>(it: I, search: &str, n_results: usize) -> Vec<(String, Option<T>)>
-where
-    T: Clone + std::fmt::Display + Label + 'static,
-    I: Iterator<Item = &'a T>,
-{
-    let matcher = SkimMatcherV2::default();
-    it.filter_map(|i| match matcher.fuzzy_match(i.label().borrow(), search) {
-        Some(score) => Some((score, i)),
-        None => None,
-    })
-    .sorted_by(|(score1, _), (score2, _)| score1.cmp(score2).reverse())
-    .take(n_results)
-    .map(|(_, i)| (i.to_string(), Some(i.clone())))
-    .collect()
-}
-
-/// `title` must be unique (it is used in the name of the view)
+/// `title` must be unique (it is used in the name of the view). Parameters of
+/// `edit_search_fn` are search view name, search string, and (max) number of
+/// results.
 pub fn new_search_view<T, F, G>(
     title: &str,
     initial_results: Vec<(String, Option<T>)>,
@@ -214,8 +188,6 @@ pub fn new_search_view<T, F, G>(
     submit_fn: G,
 ) -> SearchView
 where
-    // Parameters are search view name, search string, and (max) number of
-    // results.
     F: Fn(&mut Cursive, &str, &str, usize) + 'static,
     T: 'static,
     G: Fn(&mut Cursive, &T) + 'static,
@@ -276,27 +248,27 @@ pub fn update_search_view<T>(
 ) where
     T: 'static,
 {
-    let mut select_view = siv
-        .find_name::<SelectView<Option<T>>>(&search_view_name)
-        .unwrap();
-    select_view.clear();
-    for (label, value) in results {
-        select_view.add_item(label, value);
-    }
+    siv.find_name::<SelectView<Option<T>>>(&search_view_name)
+        .map(|mut select_view| {
+            select_view.clear();
+            for (label, value) in results {
+                select_view.add_item(label, value);
+            }
+        });
 }
 
-/// Convenience wrapper for new_search_view with results searched using rank_fn
+/// Convenience wrapper for new_search_view with results searched using search::rank_fn
 pub fn new_simple_search_view<T, G>(title: &str, items: Vec<T>, submit_fn: G) -> SearchView
 where
-    T: Clone + std::fmt::Display + Label + 'static,
+    T: Clone + std::fmt::Display + search::Label + 'static,
     G: Fn(&mut Cursive, &T) + 'static,
 {
-    let initial_results = rank_fn(items.iter(), "", usize::MAX);
+    let initial_results = search::rank_fn(items.iter(), "", usize::MAX);
     new_search_view(
         title,
         initial_results,
         move |siv, view_name, search, n_results| {
-            let results = rank_fn(items.iter(), search, n_results);
+            let results = search::rank_fn(items.iter(), search, n_results);
             update_search_view(siv, view_name, results);
         },
         submit_fn,
@@ -345,17 +317,5 @@ mod tests {
         let search_view = new_simple_search_view("test", items, submit_fn);
         siv.add_layer(search_view);
         siv.run();
-    }
-
-    #[test]
-    #[ignore]
-    /// Very crude benchmark for the ranking function
-    fn bench_rank_fn() {
-        let program = crate::program::Program::new("program".to_string()).unwrap();
-        println!("Loaded");
-        let now = std::time::Instant::now();
-        let results = rank_fn(program.symbols_iterator(), "test", 10);
-        println!("{:#?}", results);
-        println!("{:#?}", now.elapsed());
     }
 }
