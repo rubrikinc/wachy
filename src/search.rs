@@ -3,7 +3,8 @@ use crate::program::{SymbolInfo, SymbolsGenerator};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use itertools::Itertools;
-use std::borrow::{Borrow, Cow};
+use std::borrow::Cow;
+use std::cmp;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -100,7 +101,8 @@ impl Searcher {
                             rank_fn_with_cancellation(it, &search, n_results, is_cancelled_fn);
                         match results_opt {
                             Some(_) => log::debug!(
-                                "Completed, returning {} results in {:#?}",
+                                "Completed search for {}, returning {} results in {:#?}",
+                                search,
                                 results_opt.as_ref().map(|r| r.len()).unwrap_or(0),
                                 start_time.elapsed()
                             ),
@@ -168,7 +170,7 @@ where
         if i % 32 == 0 && is_cancelled_fn() {
             return None;
         }
-        match matcher.fuzzy_match(val.label().borrow(), search) {
+        match matcher.fuzzy_match(&*val.label(), search) {
             Some(score) => candidates.push((score, val)),
             _ => (),
         }
@@ -177,7 +179,21 @@ where
     Some(
         candidates
             .into_iter()
-            .sorted_by(|(score1, _), (score2, _)| score1.cmp(score2).reverse())
+            .sorted_by(|(score1, val1), (score2, val2)| {
+                match score1.cmp(score2).reverse() {
+                    // Prefer shorter candidates - e.g. in C++ you often have
+                    // types that are stored in templatized types like
+                    // unique_ptr/map etc. along with some templatized
+                    // functions, but the non-templatized i.e. shortest
+                    // functions are typically the ones I want to trace.
+                    cmp::Ordering::Equal => {
+                        let len1 = val1.label().len();
+                        let len2 = val2.label().len();
+                        len1.cmp(&len2)
+                    }
+                    o => o,
+                }
+            })
             .take(n_results)
             .map(|(_, i)| (i.to_string(), Some(i.clone())))
             .collect(),

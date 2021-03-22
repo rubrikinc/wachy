@@ -226,6 +226,7 @@ impl TraceStack {
                 .map_or(false, |cis| cis.contains(&ci))
                 || top_frame.unattached_callsites.contains(&ci)
         );
+        log::info!("Tracing callsite {}", ci);
         top_frame.traced_callsites.insert(line, ci);
         guard.tx.send(Event::TraceCommandModified).unwrap();
     }

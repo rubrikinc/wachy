@@ -3,7 +3,6 @@ use core::cmp::Ordering;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, ScrollView, SelectView};
 use cursive::Cursive;
-use std::borrow::Borrow;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug)]
@@ -227,7 +226,7 @@ where
         .on_submit(move |siv: &mut Cursive, _| {
             let select_view = siv.find_name::<SelectView<Option<T>>>(&name_copy).unwrap();
             if let Some(sel) = select_view.selection() {
-                if let Some(item) = sel.borrow() {
+                if let Some(item) = &*sel {
                     siv.pop_layer();
                     submit_cb_copy(siv, item);
                 }
