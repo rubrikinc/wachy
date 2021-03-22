@@ -363,6 +363,43 @@ impl Controller {
             siv.add_layer(search_view);
         });
 
+        siv.add_global_callback('>', |siv| {
+            let controller = siv.user_data::<Controller>().unwrap();
+            let initial_results = vec![("Type to search".to_string(), None)];
+            controller
+                .searcher
+                .setup_search(initial_results.clone(), Vec::new());
+            let search_view = views::new_search_view(
+                "Select the function to enter",
+                initial_results,
+                move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    controller.searcher.search(view_name, search, n_results);
+                },
+                move |siv: &mut Cursive, symbol: &SymbolInfo| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    // TODO cancel any pending searches
+                    if controller.program.is_dynamic_symbol(symbol) {
+                        // TODO show error for dyn fn
+                    } else {
+                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        // Reset lifetime of `controller` to avoid overlapping
+                        // mutable borrows of `siv`.
+                        let controller = siv.user_data::<Controller>().unwrap();
+                        // TODO don't expect
+                        let frame_info = Controller::setup_function(
+                            &controller.program,
+                            symbol.name,
+                            &mut *sview,
+                        )
+                        .expect(&format!("Error setting up function {}", symbol.name));
+                        controller.trace_stack.push(frame_info);
+                    }
+                },
+            );
+            siv.add_layer(search_view);
+        });
+
         siv.add_global_callback(
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
