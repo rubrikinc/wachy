@@ -26,18 +26,25 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn run(program: Program, function_name: &str) -> Result<(), Error> {
+    /// For initial function, display searching UI after this many milliseconds
+    const DISPLAY_SEARCHING_UI_MS: u128 = 100;
+
+    pub fn run(program: Program, search: &str) -> Result<(), Error> {
         Tracer::run_prechecks()?;
 
-        let (tx, mut rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let mut siv = cursive::default();
-        let function = Controller::get_matching_function(
-            function_name,
+        let function = Controller::get_initial_function(
+            search,
             &mut siv,
             Searcher::new(tx.clone(), program.symbols_generator()),
             tx.clone(),
-            &mut rx,
+            &rx,
         )?;
+        let function = match function {
+            Some(f) => f,
+            None => return Ok(()),
+        };
 
         let mut sview = views::new_source_view();
         let frame_info = Controller::setup_function(&program, function, &mut sview)?;
@@ -80,22 +87,22 @@ impl Controller {
         Ok(())
     }
 
-    fn get_matching_function(
-        function_name: &str,
+    fn get_initial_function(
+        search: &str,
         siv: &mut Cursive,
         searcher: Searcher,
         tx: mpsc::Sender<Event>,
-        rx: &mut mpsc::Receiver<Event>,
-    ) -> Result<FunctionName, Error> {
+        rx: &mpsc::Receiver<Event>,
+    ) -> Result<Option<FunctionName>, Error> {
         let empty_search_results = vec![(
             "Type to select the top-level function to trace".to_string(),
             None,
         )];
-        searcher.setup_search(empty_search_results.clone(), Vec::new());
+        searcher.setup_search(empty_search_results, Vec::new());
         siv.set_user_data(searcher);
         let search_view = views::new_search_view(
             "Select the top-level function to trace",
-            empty_search_results,
+            vec![("Searching...".to_string(), None)],
             move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
                 let searcher = siv.user_data::<Searcher>().unwrap();
                 searcher.search(view_name, search, n_results);
@@ -110,16 +117,18 @@ impl Controller {
         let callback = siv
             .find_name::<cursive::views::EditView>("search_Select the top-level function to trace")
             .unwrap()
-            .set_content(function_name);
+            .set_content(search);
         callback(siv);
 
-        siv.refresh();
+        let mut is_initial_result = true;
+        let mut start_time = Some(std::time::Instant::now());
         while siv.is_running() {
             siv.step();
-
             match rx.try_recv() {
                 Ok(data) => match data {
                     Event::SearchResults(counter, view_name, results) => {
+                        let was_initial_result = is_initial_result;
+                        is_initial_result = false;
                         if !siv
                             .user_data::<Searcher>()
                             .unwrap()
@@ -127,11 +136,19 @@ impl Controller {
                         {
                             continue;
                         }
+                        // If this was the initial search and there's only one
+                        // match, consider this to be the selected one.
+                        if results.len() == 1 && was_initial_result {
+                            if let Some(symbol) = &results[0].1 {
+                                siv.pop_layer();
+                                return Ok(Some(symbol.name));
+                            };
+                        }
                         views::update_search_view(siv, &view_name, results);
                     }
                     Event::SelectedFunction(function) => {
                         siv.pop_layer();
-                        return Ok(function);
+                        return Ok(Some(function));
                     }
                     _ => {
                         panic!("Unexpected event")
@@ -142,8 +159,19 @@ impl Controller {
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
             }
+
+            if start_time.map_or(false, |t| {
+                t.elapsed().as_millis() > Controller::DISPLAY_SEARCHING_UI_MS
+            }) {
+                start_time.take();
+                // We only refresh after a delay so that if we get a single
+                // match and it's finished quickly enough, we can return that
+                // without flashing the cursive UI at all.
+                siv.refresh();
+            }
         }
-        Err("cursive exited".into())
+        // Cancelled
+        Ok(None)
     }
 
     fn handle_event(siv: &mut Cursive, event: Event) -> Result<(), Error> {
