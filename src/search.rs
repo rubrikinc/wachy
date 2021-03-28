@@ -175,9 +175,16 @@ where
         if i % 32 == 0 && is_cancelled_fn() {
             return None;
         }
-        match matcher.fuzzy_match(&*val.label(), search) {
-            Some(score) => candidates.push((score, val)),
-            _ => (),
+        if search.starts_with("=") {
+            // Exact substring search
+            if val.label().contains(&search[1..]) {
+                candidates.push((1, val));
+            }
+        } else {
+            match matcher.fuzzy_match(&*val.label(), search) {
+                Some(score) => candidates.push((score, val)),
+                _ => (),
+            }
         }
     }
 
