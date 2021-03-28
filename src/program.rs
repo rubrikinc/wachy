@@ -281,21 +281,6 @@ impl Program {
         df
     }
 
-    pub fn get_matches(&self, function_name: &str) -> Vec<FunctionName> {
-        let mut matches = Vec::new();
-        for (name, symbol) in &*self.name_to_symbol {
-            let display_name = symbol.as_ref();
-            if display_name == function_name {
-                return vec![*name];
-            }
-            if display_name.contains(function_name) {
-                matches.push(*name);
-            }
-        }
-        log::debug!("Matches for {}: {:?}", function_name, matches);
-        matches
-    }
-
     pub fn get_address(&self, function: FunctionName) -> u64 {
         self.name_to_symbol.get(&function).unwrap().address
     }

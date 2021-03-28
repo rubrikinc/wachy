@@ -247,13 +247,17 @@ pub fn update_search_view<T>(
 ) where
     T: 'static,
 {
-    siv.find_name::<SelectView<Option<T>>>(&search_view_name)
+    let found_opt = siv
+        .find_name::<SelectView<Option<T>>>(&search_view_name)
         .map(|mut select_view| {
             select_view.clear();
             for (label, value) in results {
                 select_view.add_item(label, value);
             }
         });
+    found_opt.map(|_| {
+        siv.refresh();
+    });
 }
 
 /// Convenience wrapper for new_search_view with results searched using search::rank_fn

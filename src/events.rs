@@ -1,3 +1,4 @@
+use crate::program::FunctionName;
 use crate::program::SymbolInfo;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -10,6 +11,7 @@ pub enum Event {
     TraceCommandModified,
     /// Counter, search view name, results
     SearchResults(u64, String, Vec<(String, Option<SymbolInfo>)>),
+    SelectedFunction(FunctionName),
 }
 
 /// Format in which trace data is passed back

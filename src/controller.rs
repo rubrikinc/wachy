@@ -27,14 +27,26 @@ pub struct Controller {
 
 impl Controller {
     pub fn run(program: Program, function_name: &str) -> Result<(), Error> {
-        let matches = program.get_matches(function_name);
-        // TODO ensure one and only one match
-        let function = matches.into_iter().next().unwrap();
+        Tracer::run_prechecks()?;
+
+        let (tx, mut rx) = mpsc::channel();
+        let mut siv = cursive::default();
+        let function = Controller::get_matching_function(
+            function_name,
+            &mut siv,
+            Searcher::new(tx.clone(), program.symbols_generator()),
+            tx.clone(),
+            &mut rx,
+        )?;
 
         let mut sview = views::new_source_view();
         let frame_info = Controller::setup_function(&program, function, &mut sview)?;
+        siv.add_layer(
+            cursive::views::Dialog::around(sview.with_name("source_view"))
+                .title(format!("wachy | {}", program.file_path))
+                .full_screen(),
+        );
 
-        let (tx, rx) = mpsc::channel();
         let trace_stack = Arc::new(TraceStack::new(
             program.file_path.clone(),
             frame_info,
@@ -44,14 +56,7 @@ impl Controller {
 
         let searcher = Searcher::new(tx, program.symbols_generator());
 
-        let mut siv = cursive::default();
-        siv.add_layer(
-            cursive::views::Dialog::around(sview.with_name("source_view"))
-                .title(format!("wachy | {}", program.file_path))
-                .full_screen(),
-        );
         Controller::add_callbacks(&mut siv);
-
         let controller = Controller {
             program,
             searcher,
@@ -73,6 +78,72 @@ impl Controller {
             }
         }
         Ok(())
+    }
+
+    fn get_matching_function(
+        function_name: &str,
+        siv: &mut Cursive,
+        searcher: Searcher,
+        tx: mpsc::Sender<Event>,
+        rx: &mut mpsc::Receiver<Event>,
+    ) -> Result<FunctionName, Error> {
+        let empty_search_results = vec![(
+            "Type to select the top-level function to trace".to_string(),
+            None,
+        )];
+        searcher.setup_search(empty_search_results.clone(), Vec::new());
+        siv.set_user_data(searcher);
+        let search_view = views::new_search_view(
+            "Select the top-level function to trace",
+            empty_search_results,
+            move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
+                let searcher = siv.user_data::<Searcher>().unwrap();
+                searcher.search(view_name, search, n_results);
+            },
+            move |_, symbol: &SymbolInfo| {
+                // TODO cancel any pending searches
+                tx.send(Event::SelectedFunction(symbol.name)).unwrap();
+            },
+        );
+        siv.add_layer(search_view);
+        // TODO pass name more cleanly
+        let callback = siv
+            .find_name::<cursive::views::EditView>("search_Select the top-level function to trace")
+            .unwrap()
+            .set_content(function_name);
+        callback(siv);
+
+        siv.refresh();
+        while siv.is_running() {
+            siv.step();
+
+            match rx.try_recv() {
+                Ok(data) => match data {
+                    Event::SearchResults(counter, view_name, results) => {
+                        if !siv
+                            .user_data::<Searcher>()
+                            .unwrap()
+                            .is_counter_current(counter)
+                        {
+                            continue;
+                        }
+                        views::update_search_view(siv, &view_name, results);
+                    }
+                    Event::SelectedFunction(function) => {
+                        siv.pop_layer();
+                        return Ok(function);
+                    }
+                    _ => {
+                        panic!("Unexpected event")
+                    }
+                },
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(format!("Unexpected error: channel disconnected").into())
+                }
+                Err(mpsc::TryRecvError::Empty) => (),
+            }
+        }
+        Err("cursive exited".into())
     }
 
     fn handle_event(siv: &mut Cursive, event: Event) -> Result<(), Error> {
@@ -123,6 +194,9 @@ impl Controller {
                 }
                 views::update_search_view(siv, &view_name, results);
                 Ok(())
+            }
+            Event::SelectedFunction(_) => {
+                panic!("Unexpected event");
             }
         }
     }

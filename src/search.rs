@@ -45,7 +45,7 @@ impl Searcher {
         empty_search_results: Vec<(String, Option<SymbolInfo>)>,
         fixed_items: Vec<SymbolInfo>,
     ) {
-        self.counter.fetch_add(1, Ordering::Release);
+        self.inc_counter();
         self.tx
             .send(SearchCommand::SetEmptySearchResults(empty_search_results))
             .unwrap();
@@ -54,8 +54,12 @@ impl Searcher {
             .unwrap();
     }
 
+    fn inc_counter(&self) -> u64 {
+        self.counter.fetch_add(1, Ordering::Release)
+    }
+
     pub fn search(&self, view_name: &str, search: &str, n_results: usize) {
-        let counter = self.counter.fetch_add(1, Ordering::Release) + 1;
+        let counter = self.inc_counter() + 1;
         self.tx
             .send(SearchCommand::Search(
                 counter,
@@ -123,6 +127,7 @@ impl Searcher {
 
 impl Drop for Searcher {
     fn drop(&mut self) {
+        self.inc_counter();
         self.tx.send(SearchCommand::Exit).unwrap();
         // This is the only place we modify `search_thread`, so it must be
         // non-empty here.

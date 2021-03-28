@@ -20,12 +20,7 @@ enum TraceCommand {
 }
 
 impl Tracer {
-    /// tx is used to transmit trace data in response to the requests given to
-    /// this class.
-    pub fn new(
-        trace_stack: Arc<TraceStack>,
-        data_tx: mpsc::Sender<Event>,
-    ) -> Result<Tracer, Error> {
+    pub fn run_prechecks() -> Result<(), Error> {
         match Command::new("bpftrace").arg("--version").output() {
             Ok(output) => log::trace!("bpftrace version: {:?}", output),
             Err(err) => {
@@ -38,6 +33,15 @@ impl Tracer {
         }
         // TODO ensure is root
 
+        Ok(())
+    }
+
+    /// tx is used to transmit trace data in response to the requests given to
+    /// this class.
+    pub fn new(
+        trace_stack: Arc<TraceStack>,
+        data_tx: mpsc::Sender<Event>,
+    ) -> Result<Tracer, Error> {
         let (command_tx, command_rx) = mpsc::channel();
         let command_thread = thread::spawn(move || {
             TraceCommandHandler::new(trace_stack, data_tx).run(command_rx);
