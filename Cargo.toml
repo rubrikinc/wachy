@@ -1,6 +1,6 @@
 [package]
 name = "wachy"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
 
@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 addr2line = { path = "../addr2line" }
 backtrace = "0.3.50"
+clap = { version = "2.33.3", default-features = false }
 cplus_demangle = "0.1.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }
@@ -24,3 +25,7 @@ serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0.57"
 simple-logging = { path = "../simple-logging" }
 zydis = "3.1.1"
+
+[profile.release]
+# Helps reduce binary size
+lto = true

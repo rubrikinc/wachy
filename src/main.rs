@@ -7,10 +7,13 @@ mod trace_structs;
 mod tracer;
 mod views;
 
+use clap::{App, Arg};
 use std::env;
 use std::fmt::Write;
 use std::panic::PanicInfo;
 use std::sync::Mutex;
+
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 lazy_static::lazy_static! {
     static ref PANIC_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
@@ -33,18 +36,27 @@ fn setup_logging() {
 fn main() {
     setup_logging();
     let run = || -> Result<(), error::Error> {
-        let arg_len = env::args().len();
-        if arg_len != 3 {
-            return Err(format!("Usage: {} <file> <function>", env::args().next().unwrap()).into());
-        }
+        let args = App::new("wachy")
+            .version(VERSION)
+            .about("A tracing profiler for arbitrary binaries using eBPF")
+            .arg(
+                Arg::with_name("FILE")
+                    .help("Path of binary to trace")
+                    .required(true),
+            )
+            .arg(
+                Arg::with_name("FUNCTION")
+                    .help("Function to trace")
+                    .required(true),
+            )
+            .get_matches();
 
-        let mut args = env::args().skip(1);
         // TODO make absolute
-        let file_path = args.next().unwrap();
-        let function_name = args.next().unwrap();
+        let file_path = args.value_of("FILE").unwrap();
+        let function_name = args.value_of("FUNCTION").unwrap();
 
-        let program = program::Program::new(file_path)?;
-        controller::Controller::run(program, &function_name)?;
+        let program = program::Program::new(file_path.to_string())?;
+        controller::Controller::run(program, function_name)?;
         Ok(())
     };
 
@@ -54,7 +66,7 @@ fn main() {
     // afterwards.
     std::panic::set_hook(Box::new(|info: &PanicInfo| {
         let mut msg = String::new();
-        let _ = writeln!(msg, "Panic! [v{}]", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(msg, "Panic! [v{}]", VERSION);
         if let Some(payload) = info.payload().downcast_ref::<&str>() {
             let _ = writeln!(msg, "Cause: {}", payload);
         }
