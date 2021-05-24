@@ -502,6 +502,10 @@ impl Controller {
             siv.add_layer(search_view);
         });
 
+        siv.add_global_callback('r', |siv| {
+            siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
+        });
+
         siv.add_global_callback(
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
