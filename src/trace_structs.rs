@@ -165,8 +165,8 @@ impl fmt::Display for CallInstruction {
 impl fmt::Display for InstructionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InstructionType::DynamicSymbol(addr) => f.write_str(&addr.pretty_print()),
-            InstructionType::Function(function) => f.write_str(function.0),
+            InstructionType::DynamicSymbol(function) => f.write_str(&function.pretty_print()),
+            InstructionType::Function(function) => f.write_str(&function.pretty_print()),
             InstructionType::Register(register, displacement) => match displacement {
                 Some(d) => f.write_fmt(format_args!("[{}+0x{:x}]", register, d)),
                 None => f.write_str(register),

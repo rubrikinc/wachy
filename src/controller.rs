@@ -343,7 +343,8 @@ impl Controller {
                 // This is an inlined call. We don't know which line it
                 // corresponds to in the source file we are displaying.
                 log::trace!(
-                    "Not displaying function call from {}:{} because it is not in current source file {}",
+                    "Not displaying function call {} from {}:{} because it is not in current source file {}",
+                    call_instruction,
                     location.file.unwrap(),
                     location.line.unwrap(),
                     source_file
