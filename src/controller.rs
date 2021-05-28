@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
+use std::time::Instant;
 use zydis::enums::generated::{Mnemonic, Register};
 
 pub struct Controller {
@@ -23,6 +24,7 @@ pub struct Controller {
     searcher: Searcher,
     tracer: Tracer,
     trace_stack: Arc<TraceStack>,
+    key_handler: KeyHandler,
 }
 
 impl Controller {
@@ -62,13 +64,13 @@ impl Controller {
         let tracer = Tracer::new(Arc::clone(&trace_stack), tx.clone())?;
 
         let searcher = Searcher::new(tx, program.symbols_generator());
-
         Controller::add_callbacks(&mut siv);
         let controller = Controller {
             program,
             searcher,
             tracer,
             trace_stack,
+            key_handler: KeyHandler::new(),
         };
         siv.set_user_data(controller);
 
@@ -121,7 +123,7 @@ impl Controller {
         callback(siv);
 
         let mut is_initial_result = true;
-        let mut start_time = Some(std::time::Instant::now());
+        let mut start_time = Some(Instant::now());
         while siv.is_running() {
             siv.step();
             match rx.try_recv() {
@@ -377,55 +379,118 @@ impl Controller {
     }
 
     fn add_callbacks(siv: &mut Cursive) {
-        siv.add_global_callback('x', |siv| {
-            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-            let line = sview.row().unwrap() as u32 + 1;
-            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
-            // We want to toggle tracing at this line - try to remove if it
-            // exists, otherwise proceed to add callsite.
-            if trace_stack.remove_callsite(line) {
-                Self::set_line_state(
-                    &mut *sview,
-                    line,
-                    TraceState::Untraced,
-                    TraceState::Untraced,
-                );
-                return;
-            }
-
-            let callsites = trace_stack.get_callsites(line);
-            if callsites.is_empty() {
-                let function = trace_stack.get_current_function();
-                siv.add_layer(views::new_dialog(&format!(
-                    "No calls found in {} on line {}. Note the call may have been inlined.",
-                    function, line
-                )));
-                return;
-            }
-            if callsites.len() > 1 {
-                let search_view = views::new_simple_search_view(
-                    "Select the call to trace",
-                    callsites,
-                    move |siv: &mut Cursive, ci: &CallInstruction| {
-                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        Self::set_line_state(
-                            &mut *sview,
-                            line,
-                            TraceState::Pending,
-                            TraceState::Pending,
-                        );
-                        let controller = siv.user_data::<Controller>().unwrap();
-                        controller.trace_stack.add_callsite(line, ci.clone());
-                    },
-                );
-                siv.add_layer(search_view);
-            } else {
-                Self::set_line_state(&mut *sview, line, TraceState::Pending, TraceState::Pending);
-                trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
-            }
+        siv.add_global_callback(cursive::event::Event::CtrlChar('t'), |siv| {
+            siv.user_data::<Controller>()
+                .unwrap()
+                .key_handler
+                .advanced_mode_key_pressed();
         });
 
-        siv.add_global_callback('X', |siv| {
+        KeyHandler::add_global_callbacks(
+            siv,
+            'x',
+            |siv| {
+                // Normal trace
+                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let line = sview.row().unwrap() as u32 + 1;
+                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                // We want to toggle tracing at this line - try to remove if it
+                // exists, otherwise proceed to add callsite.
+                if trace_stack.remove_callsite(line) {
+                    Self::set_line_state(
+                        &mut *sview,
+                        line,
+                        TraceState::Untraced,
+                        TraceState::Untraced,
+                    );
+                    return;
+                }
+
+                let callsites = trace_stack.get_callsites(line);
+                if callsites.is_empty() {
+                    let function = trace_stack.get_current_function();
+                    siv.add_layer(views::new_dialog(&format!(
+                        "No calls found in {} on line {}. Note the call may have been inlined.",
+                        function, line
+                    )));
+                    return;
+                }
+                if callsites.len() > 1 {
+                    let search_view = views::new_simple_search_view(
+                        "Select the call to trace",
+                        callsites,
+                        move |siv: &mut Cursive, ci: &CallInstruction| {
+                            let mut sview =
+                                siv.find_name::<views::SourceView>("source_view").unwrap();
+                            Self::set_line_state(
+                                &mut *sview,
+                                line,
+                                TraceState::Pending,
+                                TraceState::Pending,
+                            );
+                            let controller = siv.user_data::<Controller>().unwrap();
+                            controller.trace_stack.add_callsite(line, ci.clone());
+                        },
+                    );
+                    siv.add_layer(search_view);
+                } else {
+                    Self::set_line_state(
+                        &mut *sview,
+                        line,
+                        TraceState::Pending,
+                        TraceState::Pending,
+                    );
+                    trace_stack.add_callsite(line, callsites.into_iter().nth(0).unwrap());
+                }
+            },
+            |siv| {
+                // Advanced mode - allow specifying exact addresses to trace
+                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let line = sview.row().unwrap() as u32 + 1;
+                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                // We want to toggle tracing at this line - try to remove if it
+                // exists, otherwise proceed to add callsite.
+                if trace_stack.remove_callsite(line) {
+                    Self::set_line_state(
+                        &mut *sview,
+                        line,
+                        TraceState::Untraced,
+                        TraceState::Untraced,
+                    );
+                    return;
+                }
+
+                siv.add_layer(views::new_edit_view(
+                    "Enter trace start offset, relative to start of the current function, in bytes",
+                    move |siv, start_offset| {
+                        siv.pop_layer();
+                        // Clone for lifetime purposes
+                        let start_offset = start_offset.to_string();
+                        siv.add_layer(views::new_edit_view(
+                            "Enter trace end offset, relative to start of the current function, in bytes",
+                            move |siv, end_offset| {
+                                siv.pop_layer();
+                                let start_ip = unwrap::unwrap!(start_offset.parse::<u32>(), "Could not parse {} as number", start_offset);
+                                let end_ip = unwrap::unwrap!(end_offset.parse::<u32>(), "Could not parse {} as number", end_offset);
+                                assert!(end_ip > start_ip);
+                                let ci = CallInstruction::manual(start_ip, end_ip - start_ip);
+                                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                                Self::set_line_state(
+                                    &mut *sview,
+                                    line,
+                                    TraceState::Pending,
+                                    TraceState::Pending,
+                                );
+                                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                                trace_stack.add_callsite(line, ci);
+                            },
+                        ));
+                    },
+                ));
+            },
+        );
+
+        KeyHandler::add_global_callback(siv, 'X', |siv| {
             let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
             let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
             let line = sview.row().unwrap() as u32 + 1;
@@ -466,7 +531,7 @@ impl Controller {
             siv.add_layer(search_view);
         });
 
-        siv.add_global_callback('>', |siv| {
+        KeyHandler::add_global_callback(siv, '>', |siv| {
             let controller = siv.user_data::<Controller>().unwrap();
             let initial_results = vec![("Type to search".to_string(), None)];
             controller
@@ -503,11 +568,12 @@ impl Controller {
             siv.add_layer(search_view);
         });
 
-        siv.add_global_callback('r', |siv| {
+        KeyHandler::add_global_callback(siv, 'r', |siv| {
             siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
         });
 
-        siv.add_global_callback(
+        KeyHandler::add_global_callback(
+            siv,
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
                 let sview = siv.find_name::<views::SourceView>("source_view").unwrap();
@@ -531,6 +597,7 @@ impl Controller {
                     .into_iter()
                     .filter_map(|ci| match ci.instruction {
                         InstructionType::Unknown => None,
+                        InstructionType::Manual => None,
                         InstructionType::Register(_, _) => None,
                         InstructionType::DynamicSymbol(function) => {
                             Some(controller.program.get_symbol(function))
@@ -602,7 +669,8 @@ impl Controller {
             },
         );
 
-        siv.add_global_callback(
+        KeyHandler::add_global_callback(
+            siv,
             cursive::event::Event::Key(cursive::event::Key::Esc),
             |siv| {
                 if siv.screen().len() > 1 {
@@ -620,6 +688,62 @@ impl Controller {
                 }
             },
         );
+    }
+}
+
+pub struct KeyHandler {
+    advanced_mode_enable_time: Option<Instant>,
+}
+
+impl KeyHandler {
+    const ADVANCED_MODE_DURATION_MS: u128 = 1000;
+
+    pub fn new() -> KeyHandler {
+        KeyHandler {
+            advanced_mode_enable_time: None,
+        }
+    }
+
+    pub fn advanced_mode_key_pressed(&mut self) {
+        self.advanced_mode_enable_time = Some(Instant::now());
+    }
+
+    /// We support 2 callbacks for any key: one is the normal one, and the
+    /// second is with "advanced mode". Advanced mode is enabled by pressing
+    /// `Ctrl-t` and then the key.
+    pub fn add_global_callbacks<E, F1, F2>(
+        siv: &mut Cursive,
+        event: E,
+        mut normal_cb: F1,
+        mut advanced_cb: F2,
+    ) where
+        E: Into<cursive::event::Event>,
+        F1: FnMut(&mut Cursive) + 'static,
+        F2: FnMut(&mut Cursive) + 'static,
+    {
+        siv.add_global_callback(event, move |siv| {
+            let key_handler = &siv.user_data::<Controller>().unwrap().key_handler;
+            if key_handler.advanced_mode_enable_time.map_or(false, |i| {
+                Instant::now().duration_since(i).as_millis() < KeyHandler::ADVANCED_MODE_DURATION_MS
+            }) {
+                advanced_cb(siv);
+            } else {
+                normal_cb(siv);
+            }
+        });
+    }
+
+    /// Add a single callback (no advanced mode) for a key.
+    pub fn add_global_callback<E, F1>(siv: &mut Cursive, event: E, mut normal_cb: F1)
+    where
+        E: Into<cursive::event::Event>,
+        F1: FnMut(&mut Cursive) + 'static,
+    {
+        siv.add_global_callback(event, move |siv| {
+            let key_handler = &mut siv.user_data::<Controller>().unwrap().key_handler;
+            key_handler.advanced_mode_enable_time = None;
+            normal_cb(siv);
+        });
     }
 }
 

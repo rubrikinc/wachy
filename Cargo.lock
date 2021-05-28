@@ -794,6 +794,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
 
 [[package]]
+name = "unwrap"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e33648dd74328e622c7be51f3b40a303c63f93e6fa5f08778b6203a4c25c20f"
+
+[[package]]
 name = "wachy"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -814,6 +820,7 @@ dependencies = [
  "serde",
  "serde_json",
  "simple-logging",
+ "unwrap",
  "zydis",
 ]
 

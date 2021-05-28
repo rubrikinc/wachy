@@ -50,6 +50,8 @@ pub enum InstructionType {
     /// which notably does not have E or R prefixes.
     /// Second field represents displacement within register.
     Register(String, Option<i64>),
+    /// Manually specified start/end offset for tracing
+    Manual,
     /// Unknown function call - doesn't correspond to any symbols
     Unknown,
 }
@@ -59,7 +61,7 @@ pub struct CallInstruction {
     /// IP of call instruction, relative to start of function
     relative_ip: u32,
     /// Size of instruction
-    length: u8,
+    length: u32,
     pub instruction: InstructionType,
 }
 
@@ -114,7 +116,7 @@ impl CallInstruction {
     pub fn dynamic_symbol(relative_ip: u32, length: u8, function: FunctionName) -> CallInstruction {
         CallInstruction {
             relative_ip,
-            length,
+            length: length as u32,
             instruction: InstructionType::DynamicSymbol(function),
         }
     }
@@ -122,7 +124,7 @@ impl CallInstruction {
     pub fn function(relative_ip: u32, length: u8, function: FunctionName) -> CallInstruction {
         CallInstruction {
             relative_ip,
-            length,
+            length: length as u32,
             instruction: InstructionType::Function(function),
         }
     }
@@ -135,15 +137,23 @@ impl CallInstruction {
     ) -> CallInstruction {
         CallInstruction {
             relative_ip,
-            length,
+            length: length as u32,
             instruction: InstructionType::Register(register, displacement),
+        }
+    }
+
+    pub fn manual(relative_ip: u32, length: u32) -> CallInstruction {
+        CallInstruction {
+            relative_ip,
+            length,
+            instruction: InstructionType::Manual,
         }
     }
 
     pub fn unknown(relative_ip: u32, length: u8) -> CallInstruction {
         CallInstruction {
             relative_ip,
-            length,
+            length: length as u32,
             instruction: InstructionType::Unknown,
         }
     }
@@ -157,6 +167,11 @@ impl fmt::Display for CallInstruction {
             InstructionType::DynamicSymbol(_) => f.write_fmt(format_args!("(D) {}", i)),
             InstructionType::Function(_) => f.write_fmt(format_args!("{}", i)),
             InstructionType::Register(_, _) => f.write_fmt(format_args!("(I) register {}", i)),
+            InstructionType::Manual => f.write_fmt(format_args!(
+                "Manual {}-{}",
+                self.relative_ip,
+                self.relative_ip + self.length
+            )),
             InstructionType::Unknown => f.write_fmt(format_args!("{}", i)),
         }
     }
@@ -171,6 +186,7 @@ impl fmt::Display for InstructionType {
                 Some(d) => f.write_fmt(format_args!("[{}+0x{:x}]", register, d)),
                 None => f.write_str(register),
             },
+            InstructionType::Manual => f.write_str("(Manual)"),
             InstructionType::Unknown => f.write_str("(UNKNOWN)"),
         }
     }
@@ -220,10 +236,11 @@ impl TraceStack {
         let mut guard = self.stack.lock().unwrap();
         let top_frame = guard.frames.last_mut().unwrap();
         assert!(
-            top_frame
-                .line_to_callsites
-                .get(&line)
-                .map_or(false, |cis| cis.contains(&ci))
+            ci.instruction == InstructionType::Manual
+                || top_frame
+                    .line_to_callsites
+                    .get(&line)
+                    .map_or(false, |cis| cis.contains(&ci))
                 || top_frame.unattached_callsites.contains(&ci)
         );
         log::info!("Tracing callsite {}", ci);

@@ -293,6 +293,14 @@ pub fn new_quit_dialog(text: &str) -> Dialog {
         })
 }
 
+pub fn new_edit_view<F>(title: &str, submit_fn: F) -> Dialog
+where
+    F: Fn(&mut Cursive, &str) + 'static,
+{
+    let edit_view = EditView::new().filler(" ").on_submit(submit_fn);
+    Dialog::around(edit_view).title(title)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
