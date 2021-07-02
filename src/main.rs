@@ -52,10 +52,14 @@ fn main() {
             .get_matches();
 
         // TODO make absolute
-        let file_path = args.value_of("FILE").unwrap();
+        let file_arg = args.value_of("FILE").unwrap();
+        let file_path = match std::fs::canonicalize(file_arg) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(err) => return Err(format!("Failed to find file {}: {}", file_arg, err).into()),
+        };
         let function_name = args.value_of("FUNCTION").unwrap();
 
-        let program = program::Program::new(file_path.to_string())?;
+        let program = program::Program::new(file_path)?;
         controller::Controller::run(program, function_name)?;
         Ok(())
     };
