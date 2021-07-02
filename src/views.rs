@@ -1,7 +1,12 @@
 use crate::search;
 use core::cmp::Ordering;
+use cursive::theme::{BaseColor, Color, ColorStyle};
+use cursive::utils::markup::StyledString;
 use cursive::view::{Nameable, Resizable};
-use cursive::views::{Dialog, EditView, LinearLayout, ResizedView, ScrollView, SelectView};
+use cursive::views::{
+    Dialog, EditView, Layer, LinearLayout, PaddedView, ResizedView, ScrollView, SelectView,
+    TextView,
+};
 use cursive::Cursive;
 use std::rc::Rc;
 
@@ -170,6 +175,29 @@ pub fn set_source_view(
     sview.set_items(items);
     // TODO is second time necessary?
     sview.set_selected_row(selected_line as usize - 1);
+}
+
+pub type FooterView = PaddedView<Layer<TextView>>;
+
+fn footer_style() -> ColorStyle {
+    ColorStyle::new(Color::Dark(BaseColor::White), Color::Dark(BaseColor::Black))
+}
+
+pub fn new_footer_view() -> FooterView {
+    PaddedView::lrtb(
+        0,
+        0,
+        1,
+        0,
+        Layer::with_color(TextView::new(""), footer_style()),
+    )
+}
+
+pub fn set_footer_view(fview: &mut FooterView, content: &str) {
+    fview
+        .get_inner_mut()
+        .get_inner_mut()
+        .set_content(StyledString::styled(content, footer_style()))
 }
 
 pub type SearchView = ResizedView<Dialog>;

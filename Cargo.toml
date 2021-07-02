@@ -1,6 +1,6 @@
 [package]
 name = "wachy"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
 

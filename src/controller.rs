@@ -9,6 +9,7 @@ use crate::tracer::Tracer;
 use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
+use cursive::views::LinearLayout;
 use cursive::Cursive;
 use program::SymbolInfo;
 use std::borrow::Cow;
@@ -49,11 +50,16 @@ impl Controller {
         };
 
         let mut sview = views::new_source_view();
-        let frame_info = Controller::setup_function(&program, function, &mut sview)?;
-        siv.add_layer(
-            cursive::views::Dialog::around(sview.with_name("source_view"))
-                .title(format!("wachy | {}", program.file_path))
-                .full_screen(),
+        let mut fview = views::new_footer_view();
+        let frame_info = Controller::setup_function(&program, function, &mut sview, &mut fview)?;
+        siv.add_fullscreen_layer(
+            cursive::views::Dialog::around(
+                LinearLayout::vertical()
+                    .child(sview.with_name("source_view").full_screen())
+                    .child(fview.with_name("footer_view")),
+            )
+            .title(format!("wachy | {}", program.file_path))
+            .full_screen(),
         );
 
         let trace_stack = Arc::new(TraceStack::new(
@@ -235,15 +241,17 @@ impl Controller {
         program: &Program,
         function: FunctionName,
         sview: &mut views::SourceView,
+        fview: &mut views::FooterView,
     ) -> Result<FrameInfo, Error> {
         let frame_info = Controller::create_frame_info(program, function)?;
-        Controller::setup_source_view(&frame_info, sview)?;
+        Controller::setup_source_view(&frame_info, sview, fview)?;
         Ok(frame_info)
     }
 
     fn setup_source_view(
         frame_info: &FrameInfo,
         sview: &mut views::SourceView,
+        fview: &mut views::FooterView,
     ) -> Result<(), Error> {
         let source_code: Vec<String> = match std::fs::File::open(frame_info.get_source_file()) {
             Ok(file) => {
@@ -266,6 +274,7 @@ impl Controller {
             frame_info.get_source_line(),
             frame_info.called_lines(),
         );
+        views::set_footer_view(fview, frame_info.get_source_file());
         Ok(())
     }
 
@@ -551,6 +560,7 @@ impl Controller {
                         // TODO show error for dyn fn
                     } else {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
                         // Reset lifetime of `controller` to avoid overlapping
                         // mutable borrows of `siv`.
                         let controller = siv.user_data::<Controller>().unwrap();
@@ -559,6 +569,7 @@ impl Controller {
                             &controller.program,
                             symbol.name,
                             &mut *sview,
+                            &mut *fview,
                         )
                         .expect(&format!("Error setting up function {}", symbol.name));
                         controller.trace_stack.push(frame_info);
@@ -617,6 +628,7 @@ impl Controller {
                         // TODO show error for dyn fn
                     } else {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
                         // Reset lifetime of `controller` to avoid overlapping
                         // mutable borrows of `siv`.
                         let controller = siv.user_data::<Controller>().unwrap();
@@ -625,6 +637,7 @@ impl Controller {
                             &controller.program,
                             symbol.name,
                             &mut *sview,
+                            &mut *fview,
                         )
                         .expect(&format!("Error setting up function {}", symbol.name));
                         controller.trace_stack.push(frame_info);
@@ -682,7 +695,9 @@ impl Controller {
                 match controller.trace_stack.pop() {
                     Some(frame_info) => {
                         let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        Controller::setup_source_view(&frame_info, &mut *sview).unwrap();
+                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
+                        Controller::setup_source_view(&frame_info, &mut *sview, &mut *fview)
+                            .unwrap();
                     }
                     None => siv.add_layer(views::new_quit_dialog("Are you sure you want to quit?")),
                 }
