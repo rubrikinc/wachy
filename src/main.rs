@@ -15,6 +15,17 @@ use std::sync::Mutex;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
+const ABOUT: &'static str = r#"A tracing profiler for arbitrary binaries using eBPF.
+
+Keyboard shortcuts:
+x - toggle tracing on current line
+X - toggle tracing of an inlined function on current line
+<enter> - push current call onto trace stack
+> (shift+.) - specify arbitrary function to push onto trace stack
+<esc> - pop function off of trace stack
+r - restart trace, clear current aggregates
+"#;
+
 lazy_static::lazy_static! {
     static ref PANIC_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 }
@@ -38,7 +49,7 @@ fn main() {
     let run = || -> Result<(), error::Error> {
         let args = App::new("wachy")
             .version(VERSION)
-            .about("A tracing profiler for arbitrary binaries using eBPF")
+            .long_about(ABOUT)
             .arg(
                 Arg::with_name("FILE")
                     .help("Path of binary to trace")
