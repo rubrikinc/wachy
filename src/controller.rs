@@ -279,7 +279,7 @@ impl Controller {
     }
 
     fn create_frame_info(program: &Program, function: FunctionName) -> Result<FrameInfo, Error> {
-        let location = program.get_location(program.get_address(function)).ok_or_else(|| format!("Failed to get source information corresponding to function {}, please ensure {} has debugging symbols", function, program.file_path))?;
+        let location = program.get_location(program.get_address(function)).ok_or_else(|| format!("Failed to get source information corresponding to function {}, please ensure {} has appropriate debugging symbols", function, program.file_path))?;
         let source_file = location.file.unwrap();
         let source_line = location.line.unwrap();
         log::info!(

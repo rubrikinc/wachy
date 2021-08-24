@@ -1,6 +1,6 @@
 [package]
 name = "wachy"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
 
@@ -11,6 +11,7 @@ addr2line = { path = "../addr2line" }
 backtrace = "0.3.50"
 clap = { version = "2.33.3", default-features = false }
 cplus_demangle = "0.1.1"
+crc32fast = "1.2.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }
 fuzzy-matcher = "0.3.5"

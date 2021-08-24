@@ -9,6 +9,8 @@ use object::ObjectSymbolTable;
 use std::borrow::Cow;
 use std::collections::{hash_map, HashMap};
 use std::fmt;
+use std::io::ErrorKind;
+use std::io::Read;
 use std::sync::Arc;
 use zydis::ffi::Decoder;
 use zydis::formatter::{Formatter, OutputBuffer};
@@ -149,19 +151,25 @@ impl Program {
         let debug_file;
         let debug_file_ref = match file.section_by_name(".debug_line") {
             Some(_) => &file,
-            None => match Program::get_debug_file(&file) {
-                Ok(df) => {
-                    debug_file = df;
-                    &debug_file
-                }
-                Err(err) => {
-                    log::info!(
-                        "Failed to get debug file: {}, falling back to original file {}",
-                        err,
+            None => match Program::get_debug_file(&file, &file_path) {
+                None => {
+                    return Err(Error::from(format!(
+                        "Program {} is missing debug symbols (section .debug_line not found)",
                         file_path
-                    );
-                    &file
+                    )))
                 }
+                Some(r) => match r {
+                    Ok(df) => {
+                        debug_file = df;
+                        &debug_file
+                    }
+                    Err(err) => {
+                        return Err(Error::from(format!(
+                            "Failed to get debug file for program {}: {}",
+                            file_path, err
+                        )))
+                    }
+                },
             },
         };
         let context = new_context(debug_file_ref).unwrap();
@@ -258,27 +266,79 @@ impl Program {
         map
     }
 
-    fn get_debug_file(program_file: &File<'static>) -> Result<File<'static>, Error> {
-        let debug_link = match program_file.gnu_debuglink() {
+    // If .gnu_debuglink not found, returns None, else valid file/error
+    fn get_debug_file(
+        program_file: &File<'static>,
+        program_file_path: &String,
+    ) -> Option<Result<File<'static>, Error>> {
+        let debuglink_filename = match program_file.gnu_debuglink() {
             Ok(link_opt) => match link_opt {
                 Some(link) => {
-                    // FIXME: we should validate checksum
-                    std::str::from_utf8(link.0).unwrap().to_string()
+                    let filename = std::str::from_utf8(link.0).unwrap().to_string();
+                    // TODO if file doesn't exist in cwd we should probably
+                    // check in original file_path's folder.
+                    let mut file = match std::fs::File::open(&filename) {
+                        Ok(file) => file,
+                        Err(err) => {
+                            return Some(Err(
+                                format!("Failed to open file {}: {}", filename, err).into()
+                            ))
+                        }
+                    };
+
+                    // Validate checksum
+                    let mut hash_fn = || {
+                        const READ_SIZE: usize = 1 << 20; // 1 MB
+                        let mut buf = vec![0; READ_SIZE];
+                        let mut hasher = crc32fast::Hasher::new();
+                        loop {
+                            match file.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => hasher.update(&buf[0..n]),
+                                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                                Err(e) => {
+                                    return Err(Error::from(format!(
+                                        "Failed to read file {}: {}",
+                                        filename, e
+                                    )))
+                                }
+                            }
+                        }
+                        Ok(hasher.finalize())
+                    };
+
+                    match hash_fn() {
+                        Ok(hash) => {
+                            if hash != link.1 {
+                                log::info!(
+                                    "Expected hash {:x}, but actual debug file {} has hash {:x}",
+                                    link.1,
+                                    filename,
+                                    hash
+                                );
+                                return Some(Err(format!(
+                                    "Debug file {} does not correspond to {} (CRC mismatch)",
+                                    filename, program_file_path
+                                )
+                                .into()));
+                            }
+                        }
+                        Err(err) => return Some(Err(err)),
+                    }
+                    filename
                 }
-                None => return Err("No debuglink found".into()),
+                None => return None,
             },
-            Err(err) => return Err(format!("Failed to get debuglink: {}", err).into()),
+            Err(err) => return Some(Err(format!("Failed to get .gnu_debuglink: {}", err).into())),
         };
-        // TODO if file doesn't exist in cwd we should probably check in
-        // original file_path's folder.
-        let df = Program::parse(&debug_link);
+        let df = Program::parse(&debuglink_filename);
         if df.is_ok() {
             log::info!(
-                "Using debuglink file {} for address to line mappings",
-                debug_link
+                "Using debug file {} for address to line mappings",
+                debuglink_filename
             );
         }
-        df
+        Some(df)
     }
 
     pub fn get_address(&self, function: FunctionName) -> u64 {

@@ -51,7 +51,7 @@ fn main() {
             .version(VERSION)
             .long_about(ABOUT)
             .arg(
-                Arg::with_name("FILE")
+                Arg::with_name("PROGRAM")
                     .help("Path of binary to trace")
                     .required(true),
             )
@@ -63,7 +63,7 @@ fn main() {
             .get_matches();
 
         // TODO make absolute
-        let file_arg = args.value_of("FILE").unwrap();
+        let file_arg = args.value_of("PROGRAM").unwrap();
         let file_path = match std::fs::canonicalize(file_arg) {
             Ok(path) => path.to_string_lossy().into_owned(),
             Err(err) => return Err(format!("Failed to find file {}: {}", file_arg, err).into()),
