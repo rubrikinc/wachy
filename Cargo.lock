@@ -356,6 +356,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "flexi_logger"
+version = "0.19.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b395737a58a1f2c6958aeb9c55dec28b7145abe9d087f71325e2c1293377fdc4"
+dependencies = [
+ "chrono",
+ "glob",
+ "log",
+ "rustversion",
+ "thiserror",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,16 +638,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_syscall"
-version = "0.1.57"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c691c0e608126e00913e33f0ccf3727d5fc84573623b8d65b2df340b5201783"
+
+[[package]]
+name = "rustversion"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61b3909d758bb75c79f23d4736fac9433868679d3ad2ea7a61e3c25cfda9a088"
 
 [[package]]
 name = "ryu"
@@ -694,15 +707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-logging"
-version = "2.0.2"
-dependencies = [
- "lazy_static",
- "log",
- "thread-id",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -751,14 +755,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "thread-id"
-version = "3.3.0"
+name = "thiserror"
+version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7fbf4c9d56b320106cd64fd024dadfa0be7cb4706725fc44a7d7ce952d820c1"
+checksum = "318234ffa22e0920fe9a40d7b8369b5f649d490980cf7aadcf1eb91594869b42"
 dependencies = [
- "libc",
- "redox_syscall",
- "winapi",
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cae2447b6282786c3493999f40a9be2a6ad20cb8bd268b0a0dbf5a065535c0ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -816,6 +829,7 @@ dependencies = [
  "crc32fast",
  "cursive",
  "cursive_table_view",
+ "flexi_logger",
  "fuzzy-matcher",
  "gimli 0.23.0",
  "itertools",
@@ -826,7 +840,6 @@ dependencies = [
  "object 0.22.0",
  "serde",
  "serde_json",
- "simple-logging",
  "unwrap",
  "zydis",
 ]

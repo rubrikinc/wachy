@@ -14,6 +14,7 @@ cplus_demangle = "0.1.1"
 crc32fast = "1.2.1"
 cursive = "0.15.0"
 cursive_table_view = { path = "../cursive_table_view" }
+flexi_logger = { version = "0.19.3", default_features = false }
 fuzzy-matcher = "0.3.5"
 gimli = "0.23"
 itertools = "0.9.0"
@@ -24,7 +25,6 @@ memmap = "0.7.0"
 object = { path = "../object" }
 serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0.57"
-simple-logging = { path = "../simple-logging" }
 unwrap = "1.2.1"
 zydis = "3.1.1"
 

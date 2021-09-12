@@ -1,4 +1,7 @@
 use core::fmt;
+
+use flexi_logger::FlexiLoggerError;
+
 #[derive(Debug)]
 pub struct Error(String);
 
@@ -19,6 +22,12 @@ impl From<String> for Error {
 
 impl From<&str> for Error {
     fn from(err: &str) -> Error {
+        Error(err.to_string())
+    }
+}
+
+impl From<FlexiLoggerError> for Error {
+    fn from(err: FlexiLoggerError) -> Error {
         Error(err.to_string())
     }
 }

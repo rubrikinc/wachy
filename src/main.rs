@@ -8,6 +8,8 @@ mod tracer;
 mod views;
 
 use clap::{App, Arg};
+use error::Error;
+use flexi_logger::{opt_format, FileSpec, Logger, LoggerHandle};
 use std::env;
 use std::fmt::Write;
 use std::panic::PanicInfo;
@@ -30,23 +32,20 @@ lazy_static::lazy_static! {
     static ref PANIC_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 }
 
-fn setup_logging() {
+fn setup_logging() -> Result<Option<LoggerHandle>, Error> {
     if let Ok(var) = env::var("WACHY_LOG") {
-        let filter = match &var[..] {
-            "error" => Some(log::LevelFilter::Error),
-            "warn" => Some(log::LevelFilter::Warn),
-            "info" => Some(log::LevelFilter::Info),
-            "debug" => Some(log::LevelFilter::Debug),
-            "trace" => Some(log::LevelFilter::Trace),
-            _ => None,
-        };
-        filter.map(|f| simple_logging::log_to_file("wachy.log", f));
+        let logger = Logger::try_with_str(var)?
+            .log_to_file(FileSpec::default().suppress_timestamp())
+            .format(opt_format)
+            .start()?;
+        return Ok(Some(logger));
     }
+    Ok(None)
 }
 
 fn main() {
-    setup_logging();
-    let run = || -> Result<(), error::Error> {
+    let _logger = setup_logging();
+    let run = || -> Result<(), Error> {
         let args = App::new("wachy")
             .version(VERSION)
             .long_about(ABOUT)
