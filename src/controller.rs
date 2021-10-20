@@ -1,10 +1,10 @@
 use crate::error::Error;
-use crate::events::Event;
+use crate::events::{Event, TraceInfoMode};
 use crate::program;
 use crate::program::{FunctionName, Program};
 use crate::search;
 use crate::search::Searcher;
-use crate::trace_structs::{CallInstruction, FrameInfo, InstructionType, TraceStack};
+use crate::trace_structs::{CallInstruction, FrameInfo, InstructionType, TraceMode, TraceStack};
 use crate::tracer::Tracer;
 use crate::views;
 use crate::views::TraceState;
@@ -200,18 +200,37 @@ impl Controller {
                 {
                     return Ok(());
                 }
-                siv.call_on_name("source_view", |sview: &mut views::SourceView| {
-                    for (line, info) in data.traces {
-                        let latency = if info.count != 0 {
-                            TraceState::Traced(info.duration / u32::try_from(info.count).unwrap())
-                        } else {
-                            TraceState::Untraced
-                        };
-                        let frequency =
-                            TraceState::Traced(info.count as f32 / data.time.as_secs_f32());
-                        Self::set_line_state(sview, line, latency, frequency);
+                match data.traces {
+                    TraceInfoMode::Lines(ref lines) => {
+                        siv.call_on_name("source_view", |sview: &mut views::SourceView| {
+                            for (line, info) in lines {
+                                let latency = if info.count != 0 {
+                                    TraceState::Traced(
+                                        info.duration / u32::try_from(info.count).unwrap(),
+                                    )
+                                } else {
+                                    TraceState::Untraced
+                                };
+                                let frequency =
+                                    TraceState::Traced(info.count as f32 / data.time.as_secs_f32());
+                                Self::set_line_state(sview, *line, latency, frequency);
+                            }
+                        });
                     }
-                });
+                    TraceInfoMode::Histogram(hist) => {
+                        let function = &siv
+                            .user_data::<Controller>()
+                            .unwrap()
+                            .trace_stack
+                            .get_current_function();
+                        siv.call_on_name("histogram_view", |hview: &mut views::HistogramView| {
+                            hview.set_content(format!(
+                                "Latency histogram in nanoseconds for {}:\n{}",
+                                function, hist
+                            ));
+                        });
+                    }
+                }
                 siv.refresh();
                 Ok(())
             }
@@ -689,6 +708,9 @@ impl Controller {
                 if siv.screen().len() > 1 {
                     // Pop anything on top of source view
                     siv.pop_layer();
+                    // We may be in different mode, e.g. histogram - we should revert if closing that view
+                    let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                    trace_stack.set_mode(TraceMode::Line);
                     return;
                 }
                 let controller = siv.user_data::<Controller>().unwrap();
@@ -703,6 +725,26 @@ impl Controller {
                 }
             },
         );
+
+        KeyHandler::add_global_callback(siv, 'h', |siv| {
+            if let Some(_) = siv.find_name::<views::HistogramView>("histogram_view") {
+                // View is already open, make it no-op
+                return;
+            }
+
+            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+            trace_stack.set_mode(TraceMode::Histogram);
+            let function = trace_stack.get_current_function();
+            siv.add_layer(views::new_histogram_view(
+                &format!("Gathering latency histogram for {}...", function),
+                "histogram_view",
+                |siv| {
+                    let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                    trace_stack.set_mode(TraceMode::Line);
+                    siv.pop_layer();
+                },
+            ));
+        });
     }
 }
 

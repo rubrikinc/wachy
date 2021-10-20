@@ -131,29 +131,42 @@ impl TraceCommandHandler {
             let stdout = program.stdout.as_mut().unwrap();
             let stdout_reader = std::io::BufReader::new(stdout);
             log::trace!("Starting!");
+            let mut json_buf = String::new();
             for line in stdout_reader.lines() {
                 log::trace!("bpftrace stdout: {:?}", line);
-                // bpftrace prints all maps on exit, which we want to ignore
                 let line = match line {
                     Err(_) => continue,
                     Ok(line) => line,
                 };
-                if !line.starts_with("{") {
+                // Histograms are printed across multiple lines - we need to
+                // collect and send them all in one call. We detect line ending
+                // in `}` and use that to assume end of JSON.
+                // Is there a better way to do this?
+                if !json_buf.is_empty() {
+                    json_buf += "\n";
+                    json_buf += &line;
+                } else if !line.starts_with("{") {
+                    // bpftrace prints all maps on exit, which we want to ignore
                     continue;
+                } else {
+                    json_buf = line;
                 }
-                let parsed = TraceStack::parse(&line, counter);
-                let parsed = match parsed {
-                    Err(err) => {
-                        tx.send(Event::FatalTraceError(format!(
-                            "Failed to parse bpftrace output '{}': {:?}",
-                            line, err
-                        )))
-                        .unwrap();
-                        continue;
-                    }
-                    Ok(parsed) => parsed,
-                };
-                tx.send(Event::TraceData(parsed)).unwrap();
+                if json_buf.ends_with("}") {
+                    let parsed = TraceStack::parse(&json_buf, counter);
+                    let parsed = match parsed {
+                        Err(err) => {
+                            tx.send(Event::FatalTraceError(format!(
+                                "Failed to parse bpftrace output '{}': {:?}",
+                                json_buf, err
+                            )))
+                            .unwrap();
+                            continue;
+                        }
+                        Ok(parsed) => parsed,
+                    };
+                    tx.send(Event::TraceData(parsed)).unwrap();
+                    json_buf.clear();
+                }
             }
             let status = program.wait().unwrap();
             log::trace!("Done, status: {}!", status);

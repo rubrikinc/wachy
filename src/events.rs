@@ -20,8 +20,14 @@ pub struct TraceInfo {
     pub counter: u64,
     /// Time for which current trace has been running
     pub time: Duration,
+    pub traces: TraceInfoMode,
+}
+
+pub enum TraceInfoMode {
     /// Map from line to cumulative values
-    pub traces: HashMap<u32, TraceCumulative>,
+    Lines(HashMap<u32, TraceCumulative>),
+    /// String representation of histogram values
+    Histogram(String),
 }
 
 pub struct TraceCumulative {

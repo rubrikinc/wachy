@@ -19,19 +19,20 @@ use zydis::{
     DecodedInstruction,
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 /// Name corresponding to a function symbol that exists in the program
 pub struct FunctionName(pub &'static str);
 
 impl fmt::Display for FunctionName {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(self.0, f)
+        let demangled = cplus_demangle::demangle(self.0).unwrap_or(String::from(self.0));
+        fmt::Display::fmt(&demangled, f)
     }
 }
 
-impl FunctionName {
-    pub fn pretty_print(&self) -> String {
-        cplus_demangle::demangle(self.0).unwrap_or(String::from(self.0))
+impl fmt::Debug for FunctionName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self.0, f)
     }
 }
 

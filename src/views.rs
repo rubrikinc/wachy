@@ -313,6 +313,15 @@ pub fn new_dialog(text: &str) -> Dialog {
     })
 }
 
+pub type HistogramView = TextView;
+
+pub fn new_histogram_view<F>(text: &str, name: &str, close_fn: F) -> Dialog
+where
+    F: 'static + Fn(&mut Cursive),
+{
+    Dialog::around(TextView::new(text).with_name(name)).button("Close", close_fn)
+}
+
 pub fn new_quit_dialog(text: &str) -> Dialog {
     Dialog::text(text)
         .button("Quit", Cursive::quit)

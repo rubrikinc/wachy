@@ -1,4 +1,4 @@
-use crate::events::{Event, TraceCumulative, TraceInfo};
+use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
 use std::collections::HashMap;
 use std::fmt;
@@ -17,11 +17,19 @@ pub struct TraceStack {
 }
 
 pub struct Frames {
+    mode: TraceMode,
     /// Guaranteed to be non-empty
     frames: Vec<FrameInfo>,
     /// Gets notified whenever the stack is modified (i.e. trace command
     /// get_bpftrace_expr would change).
     tx: Sender<Event>,
+}
+
+pub enum TraceMode {
+    // Trace latency per traced line in current view
+    Line,
+    // Trace histogram of latency for the current function
+    Histogram,
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +77,8 @@ pub struct CallInstruction {
 struct TraceOutput {
     time: u64,
     // Map from (stringified) line to (duration, count)
-    traces: HashMap<String, (u64, u64)>,
+    lines: Option<HashMap<String, (u64, u64)>>,
+    histogram: Option<String>,
 }
 
 impl FrameInfo {
@@ -180,8 +189,8 @@ impl fmt::Display for CallInstruction {
 impl fmt::Display for InstructionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InstructionType::DynamicSymbol(function) => f.write_str(&function.pretty_print()),
-            InstructionType::Function(function) => f.write_str(&function.pretty_print()),
+            InstructionType::DynamicSymbol(function) => function.fmt(f),
+            InstructionType::Function(function) => function.fmt(f),
             InstructionType::Register(register, displacement) => match displacement {
                 Some(d) => f.write_fmt(format_args!("[{}+0x{:x}]", register, d)),
                 None => f.write_str(register),
@@ -195,6 +204,7 @@ impl fmt::Display for InstructionType {
 impl TraceStack {
     pub fn new(program_path: String, frame: FrameInfo, tx: Sender<Event>) -> TraceStack {
         let stack = Mutex::new(Frames {
+            mode: TraceMode::Line,
             frames: vec![frame],
             tx,
         });
@@ -284,6 +294,13 @@ impl TraceStack {
         Some(frame)
     }
 
+    pub fn set_mode(&self, mode: TraceMode) {
+        let mut guard = self.stack.lock().unwrap();
+        guard.mode = mode;
+        self.counter.fetch_add(1, Ordering::Release);
+        guard.tx.send(Event::TraceCommandModified).unwrap();
+    }
+
     /// Get appropriate bpftrace expression for current state, along with
     /// current counter value.
     /// Panics if called with empty stack
@@ -299,14 +316,14 @@ impl TraceStack {
         for (i, frame) in frames.iter().enumerate() {
             if i != frames.len() - 1 {
                 parts.push(format!(
-                    "uprobe:{}:{} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
+                    "uprobe:{}:{:?} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
                     self.program_path,
                     frame.function,
                     i,
                     i + 1
                 ));
                 parts.push(format!(
-                    "uretprobe:{}:{} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
+                    "uretprobe:{}:{:?} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
                     self.program_path,
                     frame.function,
                     i + 1,
@@ -320,36 +337,48 @@ impl TraceStack {
         let line = frame.source_line;
         let mut lines = vec![line];
         let function = frame.function;
+
         parts.push(format!(
-            "uprobe:{}:{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
+            "uprobe:{}:{:?} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
             self.program_path, function, frame_depth, line
         ));
-        parts.push(format!("uretprobe:{}:{} /@start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+        match guard.mode {
+            TraceMode::Line => {
+                parts.push(format!("uretprobe:{}:{:?} /@start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
 
-        for (&line, callsite) in &frame.traced_callsites {
-            lines.push(line);
-            parts.push(format!(
-                "uprobe:{}:{}+{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
-                self.program_path, function, callsite.relative_ip, frame_depth, line
-            ));
-            parts.push(format!(
-                "uprobe:{}:{}+{} /@depth[tid] == {} && @start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
-                self.program_path, function, callsite.relative_ip + callsite.length as u32, frame_depth, line = line));
-        }
+                for (&line, callsite) in &frame.traced_callsites {
+                    lines.push(line);
+                    parts.push(format!(
+                        "uprobe:{}:{:?}+{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
+                        self.program_path, function, callsite.relative_ip, frame_depth, line
+                    ));
+                    parts.push(format!(
+                        "uprobe:{}:{:?}+{} /@depth[tid] == {} && @start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
+                        self.program_path, function, callsite.relative_ip + callsite.length as u32, frame_depth, line = line));
+                }
 
-        parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"traces\": {"); "#.into());
-        for (i, line) in lines.iter().enumerate() {
-            let mut format_str = format!(r#"\"{}\": [%lld, %lld]"#, line);
-            if i != lines.len() - 1 {
-                format_str.push_str(", ");
+                parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"lines\": {"); "#.into());
+                for (i, line) in lines.iter().enumerate() {
+                    let mut format_str = format!(r#"\"{}\": [%lld, %lld]"#, line);
+                    if i != lines.len() - 1 {
+                        format_str.push_str(", ");
+                    }
+                    parts.push(format!(
+                        r#"printf("{format_str}", @duration{line}, @count{line}); "#,
+                        format_str = format_str,
+                        line = line
+                    ));
+                }
+                parts.push(r#"printf("}}\n"); }"#.to_string());
             }
-            parts.push(format!(
-                r#"printf("{format_str}", @duration{line}, @count{line}); "#,
-                format_str = format_str,
-                line = line
-            ));
-        }
-        parts.push(r#"printf("}}\n"); }"#.to_string());
+            TraceMode::Histogram => {
+                parts.push(format!("uretprobe:{}:{:?} /@start{line}[tid]/ {{ @histogram = hist(nsecs - @start{line}[tid]); delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+                parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"histogram\": \""); "#.into());
+                parts.push("print(@histogram); ".to_string());
+                parts.push(r#"printf("\"}\n"); }"#.to_string())
+            }
+        };
+
         let expr = parts.concat();
         log::debug!("Current bpftrace expression: {}", expr);
         // Since we hold lock we know counter won't change
@@ -358,24 +387,33 @@ impl TraceStack {
 
     /// Parse bpftrace output
     pub fn parse(line: &str, counter: u64) -> Result<TraceInfo, serde_json::Error> {
-        let info: TraceOutput = serde_json::from_str(line)?;
+        // Histogram is printed with newlines, we need to escape it to be valid
+        // JSON.
+        let line = line.replace("\n", "\\n");
+        log::debug!("Line: {}", line);
+        let info: TraceOutput = serde_json::from_str(&line)?;
+        let traces = match info.lines {
+            Some(lines) => TraceInfoMode::Lines(
+                lines
+                    .into_iter()
+                    .map(|(line, value)| {
+                        // If JSON parsing succeeded we assume it is valid output, so `line` must be valid to parse
+                        (
+                            line.parse::<u32>().unwrap(),
+                            TraceCumulative {
+                                duration: Duration::from_nanos(value.0),
+                                count: value.1,
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            None => TraceInfoMode::Histogram(info.histogram.unwrap()),
+        };
         Ok(TraceInfo {
             counter,
             time: Duration::from_secs(info.time),
-            traces: info
-                .traces
-                .into_iter()
-                .map(|(line, value)| {
-                    // If JSON parsing succeeded we assume it is valid output, so `line` must be valid to parse
-                    (
-                        line.parse::<u32>().unwrap(),
-                        TraceCumulative {
-                            duration: Duration::from_nanos(value.0),
-                            count: value.1,
-                        },
-                    )
-                })
-                .collect(),
+            traces,
         })
     }
 
