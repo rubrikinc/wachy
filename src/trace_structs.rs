@@ -1,10 +1,13 @@
+use crate::error::Error;
 use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Read;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 /// Manages the stack of functions being traced and helps generate appropriate
@@ -25,10 +28,11 @@ pub struct Frames {
     tx: Sender<Event>,
 }
 
+#[derive(Copy, Clone)]
 pub enum TraceMode {
-    // Trace latency per traced line in current view
+    /// Trace latency per traced line in current view
     Line,
-    // Trace histogram of latency for the current function
+    /// Trace histogram of latency for the current function
     Histogram,
 }
 
@@ -45,6 +49,8 @@ pub struct FrameInfo {
     /// Function calls that are actively traced. Currently we only allow one per
     /// line.
     traced_callsites: HashMap<u32, CallInstruction>,
+    /// bpftrace filter to apply to the function
+    filter: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +102,7 @@ impl FrameInfo {
             line_to_callsites,
             unattached_callsites,
             traced_callsites: HashMap::new(),
+            filter: None,
         }
     }
 
@@ -301,6 +308,48 @@ impl TraceStack {
         guard.tx.send(Event::TraceCommandModified).unwrap();
     }
 
+    pub fn get_current_filter(&self) -> Option<String> {
+        let mut guard = self.stack.lock().unwrap();
+        guard.frames.last_mut().unwrap().filter.clone()
+    }
+
+    /// Set the filter for the current function. Empty string removes the
+    /// filter. Checks that it is valid bpftrace syntax, returning a descriptive
+    /// error message if not.
+    pub fn set_current_filter(&self, filter: String) -> Result<(), Error> {
+        let mut guard = self.stack.lock().unwrap();
+        let frame = guard.frames.last_mut().unwrap();
+        if filter.is_empty() {
+            frame.filter = None;
+            return Ok(());
+        }
+
+        let prev_filter = frame.filter.take();
+        frame.filter = Some(filter);
+        // Run bpftrace in dry run mode to ensure filter compiles
+        let mut program = std::process::Command::new("bpftrace")
+            .args(&["-d", "-e", &self.get_bpftrace_expr_locked(&guard).0])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("bpftrace failed to start");
+        let status = program.wait().unwrap();
+        if !status.success() {
+            // Restore old filter on error
+            guard.frames.last_mut().unwrap().filter = prev_filter;
+            let mut stderr = String::new();
+            match program.stderr.unwrap().read_to_string(&mut stderr) {
+                Err(err) => return Err(format!("Failed to read bpftrace stderr: {:?}", err).into()),
+                _ => (),
+            }
+            Err(stderr.into())
+        } else {
+            self.counter.fetch_add(1, Ordering::Release);
+            guard.tx.send(Event::TraceCommandModified).unwrap();
+            Ok(())
+        }
+    }
+
     /// Get appropriate bpftrace expression for current state, along with
     /// current counter value.
     /// Panics if called with empty stack
@@ -310,6 +359,10 @@ impl TraceStack {
         // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
         // We use line number in variable naming to identify the results.
         let guard = self.stack.lock().unwrap();
+        self.get_bpftrace_expr_locked(&guard)
+    }
+
+    fn get_bpftrace_expr_locked(&self, guard: &MutexGuard<Frames>) -> (String, u64) {
         let frames = &guard.frames;
         let mut parts: Vec<String> =
             vec!["BEGIN { @start_time = nsecs; @depth[-1] = 0; } ".to_string()];
@@ -338,9 +391,13 @@ impl TraceStack {
         let mut lines = vec![line];
         let function = frame.function;
 
+        let filter = frame
+            .filter
+            .as_ref()
+            .map_or(String::new(), |f| "&& ".to_string() + f);
         parts.push(format!(
-            "uprobe:{}:{:?} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
-            self.program_path, function, frame_depth, line
+            "uprobe:{}:{:?} /@depth[tid] == {} {}/ {{ @start{}[tid] = nsecs; }} ",
+            self.program_path, function, frame_depth, filter, line
         ));
         match guard.mode {
             TraceMode::Line => {
@@ -390,7 +447,6 @@ impl TraceStack {
         // Histogram is printed with newlines, we need to escape it to be valid
         // JSON.
         let line = line.replace("\n", "\\n");
-        log::debug!("Line: {}", line);
         let info: TraceOutput = serde_json::from_str(&line)?;
         let traces = match info.lines {
             Some(lines) => TraceInfoMode::Lines(

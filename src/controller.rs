@@ -9,7 +9,7 @@ use crate::tracer::Tracer;
 use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
-use cursive::views::LinearLayout;
+use cursive::views::{Dialog, LinearLayout};
 use cursive::Cursive;
 use program::SymbolInfo;
 use std::borrow::Cow;
@@ -224,9 +224,14 @@ impl Controller {
                             .trace_stack
                             .get_current_function();
                         siv.call_on_name("histogram_view", |hview: &mut views::HistogramView| {
+                            let hist_text = if !hist.is_empty() {
+                                hist
+                            } else {
+                                "<Empty>".to_string()
+                            };
                             hview.set_content(format!(
                                 "Latency histogram in nanoseconds for {}:\n{}",
-                                function, hist
+                                function, hist_text
                             ));
                         });
                     }
@@ -406,6 +411,39 @@ impl Controller {
         item.frequency = frequency;
     }
 
+    /// Request user to input a filter. If it fails validation, the user is
+    /// requested to correct the filter repeatedly until it passes or user
+    /// cancels.
+    fn setup_user_filter(siv: &mut Cursive, initial_filter: Option<String>) {
+        let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+        let function = trace_stack.get_current_function();
+        siv.add_layer(views::new_edit_view(
+            &format!(
+                "Enter bpftrace filter to apply to function {} [empty to clear]",
+                function
+            ),
+            "filter_view",
+            initial_filter.as_deref(),
+            |siv, filter| {
+                siv.pop_layer();
+                if let Err(message) = siv
+                    .user_data::<Controller>()
+                    .unwrap()
+                    .trace_stack
+                    .set_current_filter(filter.to_string())
+                {
+                    let message = format!("Invalid filter:\n{}", message);
+                    let filter = filter.to_string();
+                    siv.add_layer(Dialog::text(message).button("OK", move |siv| {
+                        siv.pop_layer();
+                        // Ask user to edit filter again
+                        Controller::setup_user_filter(siv, Some(filter.clone()));
+                    }));
+                }
+            },
+        ));
+    }
+
     fn add_callbacks(siv: &mut Cursive) {
         siv.add_global_callback(cursive::event::Event::CtrlChar('t'), |siv| {
             siv.user_data::<Controller>()
@@ -418,6 +456,9 @@ impl Controller {
             siv,
             'x',
             |siv| {
+                // TODO do not show duplicate view if key pressed multiple
+                // times, for all of the callbacks.
+                //
                 // Normal trace
                 let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
                 let line = sview.row().unwrap() as u32 + 1;
@@ -490,12 +531,16 @@ impl Controller {
 
                 siv.add_layer(views::new_edit_view(
                     "Enter trace start offset, relative to start of the current function, in bytes",
+                    "start_trace_view",
+                    None,
                     move |siv, start_offset| {
                         siv.pop_layer();
                         // Clone for lifetime purposes
                         let start_offset = start_offset.to_string();
                         siv.add_layer(views::new_edit_view(
                             "Enter trace end offset, relative to start of the current function, in bytes",
+                            "end_trace_view",
+                            None,
                             move |siv, end_offset| {
                                 siv.pop_layer();
                                 let start_ip = unwrap::unwrap!(start_offset.parse::<u32>(), "Could not parse {} as number", start_offset);
@@ -707,10 +752,19 @@ impl Controller {
             |siv| {
                 if siv.screen().len() > 1 {
                     // Pop anything on top of source view
-                    siv.pop_layer();
-                    // We may be in different mode, e.g. histogram - we should revert if closing that view
-                    let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
-                    trace_stack.set_mode(TraceMode::Line);
+                    let view = siv
+                        .pop_layer()
+                        .expect("Pop unexpectedly empty despite len > 1");
+
+                    // Check if this is histogram view - we need to reset mode
+                    // if so.
+                    if views::is_histogram_view(view, "histogram_view") {
+                        siv.user_data::<Controller>()
+                            .unwrap()
+                            .trace_stack
+                            .set_mode(TraceMode::Line);
+                    }
+
                     return;
                 }
                 let controller = siv.user_data::<Controller>().unwrap();
@@ -744,6 +798,20 @@ impl Controller {
                     siv.pop_layer();
                 },
             ));
+        });
+
+        KeyHandler::add_global_callback(siv, 'f', |siv| {
+            if let Some(_) = siv.find_name::<cursive::views::EditView>("filter_view") {
+                // View is already open, make it no-op
+                return;
+            }
+
+            let initial_filter = siv
+                .user_data::<Controller>()
+                .unwrap()
+                .trace_stack
+                .get_current_filter();
+            Controller::setup_user_filter(siv, initial_filter);
         });
     }
 }

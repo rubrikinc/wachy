@@ -322,6 +322,21 @@ where
     Dialog::around(TextView::new(text).with_name(name)).button("Close", close_fn)
 }
 
+/// Check if this is a view created by `new_histogram_view` with the given `name`
+pub fn is_histogram_view(view: Box<dyn cursive::View>, name: &str) -> bool {
+    if let Some(dialog_view) = view.downcast_ref::<Dialog>() {
+        if let Some(named_view) = dialog_view
+            .get_content()
+            .downcast_ref::<cursive::views::NamedView<HistogramView>>()
+        {
+            if named_view.name() == name {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn new_quit_dialog(text: &str) -> Dialog {
     Dialog::text(text)
         .button("Quit", Cursive::quit)
@@ -330,11 +345,15 @@ pub fn new_quit_dialog(text: &str) -> Dialog {
         })
 }
 
-pub fn new_edit_view<F>(title: &str, submit_fn: F) -> Dialog
+pub fn new_edit_view<F>(title: &str, name: &str, content_opt: Option<&str>, submit_fn: F) -> Dialog
 where
     F: Fn(&mut Cursive, &str) + 'static,
 {
-    let edit_view = EditView::new().filler(" ").on_submit(submit_fn);
+    let edit_view = EditView::new()
+        .filler(" ")
+        .content(content_opt.unwrap_or(""))
+        .on_submit(submit_fn)
+        .with_name(name);
     Dialog::around(edit_view).title(title)
 }
 
