@@ -155,10 +155,12 @@ impl TraceCommandHandler {
                     let parsed = TraceStack::parse(&json_buf, counter);
                     let parsed = match parsed {
                         Err(err) => {
-                            tx.send(Event::FatalTraceError(format!(
-                                "Failed to parse bpftrace output '{}': {:?}",
-                                json_buf, err
-                            )))
+                            tx.send(Event::FatalTraceError {
+                                error_message: format!(
+                                    "Failed to parse bpftrace output '{}': {:?}",
+                                    json_buf, err
+                                ),
+                            })
                             .unwrap();
                             continue;
                         }
@@ -176,10 +178,12 @@ impl TraceCommandHandler {
                 _ => (),
             }
             if !status.success() && !is_killing_copy.load(Ordering::Acquire) {
-                tx.send(Event::FatalTraceError(format!(
-                    "bpftrace command '{}' failed, status: {:?}, stderr:\n{}",
-                    expr, status, stderr
-                )))
+                tx.send(Event::FatalTraceError {
+                    error_message: format!(
+                        "bpftrace command '{}' failed, status: {:?}, stderr:\n{}",
+                        expr, status, stderr
+                    ),
+                })
                 .unwrap();
             } else if !stderr.is_empty() {
                 log::info!("bpftrace stderr:\n{}", stderr);

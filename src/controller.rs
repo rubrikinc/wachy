@@ -134,7 +134,11 @@ impl Controller {
             siv.step();
             match rx.try_recv() {
                 Ok(data) => match data {
-                    Event::SearchResults(counter, view_name, results) => {
+                    Event::SearchResults {
+                        counter,
+                        view_name,
+                        results,
+                    } => {
                         let was_initial_result = is_initial_result;
                         is_initial_result = false;
                         if !siv
@@ -184,9 +188,9 @@ impl Controller {
 
     fn handle_event(siv: &mut Cursive, event: Event) -> Result<(), Error> {
         match event {
-            Event::FatalTraceError(message) => {
+            Event::FatalTraceError { error_message } => {
                 siv.quit();
-                Err(message.into())
+                Err(error_message.into())
             }
             Event::TraceData(data) => {
                 // Ignore any data that doesn't correspond to current view. The
@@ -243,7 +247,11 @@ impl Controller {
                 siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
                 Ok(())
             }
-            Event::SearchResults(counter, view_name, results) => {
+            Event::SearchResults {
+                counter,
+                view_name,
+                results,
+            } => {
                 if !siv
                     .user_data::<Controller>()
                     .unwrap()

@@ -1,3 +1,6 @@
+use crate::bpftrace_compiler::BlockType::{Uprobe, UprobeOffset, Uretprobe};
+use crate::bpftrace_compiler::Expression::Printf;
+use crate::bpftrace_compiler::{self, Block, BlockType, Expression};
 use crate::error::Error;
 use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
@@ -50,7 +53,18 @@ pub struct FrameInfo {
     /// line.
     traced_callsites: HashMap<u32, CallInstruction>,
     /// bpftrace filter to apply to the function
-    filter: Option<String>,
+    filter: Filter,
+}
+
+#[derive(Debug, Clone)]
+pub enum Filter {
+    None,
+    /// Filter evaluated on function entry (uprobe)
+    Filter(String),
+    /// Filter evaluated on function exit (uretprobe). E.g. something like
+    /// `$duration` has to be evaluated on return. Syntax for user to specify it
+    /// is `ret:<filter>`.
+    RetFilter(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +116,7 @@ impl FrameInfo {
             line_to_callsites,
             unattached_callsites,
             traced_callsites: HashMap::new(),
-            filter: None,
+            filter: Filter::None,
         }
     }
 
@@ -310,7 +324,11 @@ impl TraceStack {
 
     pub fn get_current_filter(&self) -> Option<String> {
         let mut guard = self.stack.lock().unwrap();
-        guard.frames.last_mut().unwrap().filter.clone()
+        match &guard.frames.last_mut().unwrap().filter {
+            Filter::None => None,
+            Filter::Filter(f) => Some(f.clone()),
+            Filter::RetFilter(f) => Some(format!("ret:{}", f)),
+        }
     }
 
     /// Set the filter for the current function. Empty string removes the
@@ -320,12 +338,16 @@ impl TraceStack {
         let mut guard = self.stack.lock().unwrap();
         let frame = guard.frames.last_mut().unwrap();
         if filter.is_empty() {
-            frame.filter = None;
+            frame.filter = Filter::None;
             return Ok(());
         }
 
-        let prev_filter = frame.filter.take();
-        frame.filter = Some(filter);
+        let prev_filter = frame.filter.clone();
+        frame.filter = if filter.starts_with("ret:") {
+            Filter::RetFilter(filter)
+        } else {
+            Filter::Filter(filter)
+        };
         // Run bpftrace in dry run mode to ensure filter compiles
         let mut program = std::process::Command::new("bpftrace")
             .args(&["-d", "-e", &self.get_bpftrace_expr_locked(&guard).0])
@@ -335,7 +357,8 @@ impl TraceStack {
             .expect("bpftrace failed to start");
         let status = program.wait().unwrap();
         if !status.success() {
-            // Restore old filter on error
+            // Restore old filter on error. Can't reference `frame` directly
+            // here due to lifetimes.
             guard.frames.last_mut().unwrap().filter = prev_filter;
             let mut stderr = String::new();
             match program.stderr.unwrap().read_to_string(&mut stderr) {
@@ -354,33 +377,32 @@ impl TraceStack {
     /// current counter value.
     /// Panics if called with empty stack
     pub fn get_bpftrace_expr(&self) -> (String, u64) {
-        // TODO add tests, update examples
-        // Example:
-        // BEGIN { @start_time = nsecs } uprobe:/home/ubuntu/test:foo { @start4[tid] = nsecs; } uretprobe:/home/ubuntu/test:foo { @duration4 += nsecs - @start4[tid]; @count4 += 1; delete(@start4[tid]); }  interval:s:1 { printf("{\"time\": %d, \"traces\": {\"4\": [%lld, %lld]}}\n", (nsecs - @start_time) / 1000000000, @duration4, @count4); }
-        // We use line number in variable naming to identify the results.
         let guard = self.stack.lock().unwrap();
         self.get_bpftrace_expr_locked(&guard)
     }
 
     fn get_bpftrace_expr_locked(&self, guard: &MutexGuard<Frames>) -> (String, u64) {
+        // We use line number in variable naming to identify the results
         let frames = &guard.frames;
-        let mut parts: Vec<String> =
-            vec!["BEGIN { @start_time = nsecs; @depth[-1] = 0; } ".to_string()];
+        let mut program = bpftrace_compiler::Program::new();
+        program.add(Block::new(
+            BlockType::Begin,
+            None,
+            vec!["@start_time = nsecs", "@depth[-1] = 0"],
+        ));
+
+        let depth_condition = |depth| Some(format!("@depth[tid] == {}", depth));
         for (i, frame) in frames.iter().enumerate() {
             if i != frames.len() - 1 {
-                parts.push(format!(
-                    "uprobe:{}:{:?} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
-                    self.program_path,
-                    frame.function,
-                    i,
-                    i + 1
+                program.add(Block::new(
+                    Uprobe(frame.function),
+                    depth_condition(i),
+                    vec![format!("@depth[tid] = {}", i + 1)],
                 ));
-                parts.push(format!(
-                    "uretprobe:{}:{:?} /@depth[tid] == {}/ {{ @depth[tid] = {} }}",
-                    self.program_path,
-                    frame.function,
-                    i + 1,
-                    i
+                program.add(Block::new(
+                    Uretprobe(frame.function),
+                    depth_condition(i + 1),
+                    vec![format!("@depth[tid] = {}", i)],
                 ));
             }
         }
@@ -391,52 +413,105 @@ impl TraceStack {
         let mut lines = vec![line];
         let function = frame.function;
 
-        let filter = frame
-            .filter
-            .as_ref()
-            .map_or(String::new(), |f| "&& ".to_string() + f);
-        parts.push(format!(
-            "uprobe:{}:{:?} /@depth[tid] == {} {}/ {{ @start{}[tid] = nsecs; }} ",
-            self.program_path, function, frame_depth, filter, line
+        let filter = ""; // TODO
+        program.add(Block::new(
+            Uprobe(function),
+            depth_condition(frame_depth),
+            vec![
+                format!("@start{}[tid] = nsecs", line),
+                format!("@depth[tid] = {}", frame_depth + 1),
+            ],
         ));
         match guard.mode {
             TraceMode::Line => {
-                parts.push(format!("uretprobe:{}:{:?} /@start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
+                program.add(Block::new(
+                    Uretprobe(function),
+                    depth_condition(frame_depth + 1),
+                    vec![
+                        format!("@duration{line} += nsecs - @start{line}[tid]", line = line),
+                        format!("@count{} += 1", line),
+                        format!("delete(@start{}[tid])", line),
+                        format!("@depth[tid] = {}", frame_depth),
+                    ],
+                ));
 
                 for (&line, callsite) in &frame.traced_callsites {
                     lines.push(line);
-                    parts.push(format!(
-                        "uprobe:{}:{:?}+{} /@depth[tid] == {}/ {{ @start{}[tid] = nsecs; }} ",
-                        self.program_path, function, callsite.relative_ip, frame_depth, line
+                    program.add(Block::new(
+                        UprobeOffset(function, callsite.relative_ip),
+                        depth_condition(frame_depth + 1),
+                        vec![format!("@start{}[tid] = nsecs", line)],
                     ));
-                    parts.push(format!(
-                        "uprobe:{}:{:?}+{} /@depth[tid] == {} && @start{line}[tid]/ {{ @duration{line} += nsecs - @start{line}[tid]; @count{line} += 1; delete(@start{line}[tid]); }} ",
-                        self.program_path, function, callsite.relative_ip + callsite.length as u32, frame_depth, line = line));
+                    // Ensure the tracepoint at the end of the call is only
+                    // triggered if we traced the start.
+                    let call_done_filter = depth_condition(frame_depth + 1)
+                        .map(|c| c + &format!(" && start{}[tid]", line));
+                    program.add(Block::new(
+                        UprobeOffset(function, callsite.relative_ip + callsite.length as u32),
+                        call_done_filter,
+                        vec![
+                            format!("@duration{line} += nsecs - @start{line}[tid]", line = line),
+                            format!("@count{} += 1", line),
+                            format!("delete(@start{}[tid])", line),
+                        ],
+                    ));
                 }
 
-                parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"lines\": {"); "#.into());
+                let mut print_exprs = vec![Printf {
+                    format: r#"{"time": %d, "lines": {"#.to_string(),
+                    args: vec!["(nsecs - @start_time) / 1000000000".to_string()],
+                }];
                 for (i, line) in lines.iter().enumerate() {
-                    let mut format_str = format!(r#"\"{}\": [%lld, %lld]"#, line);
+                    let mut format = format!(r#""{}": [%lld, %lld]"#, line);
                     if i != lines.len() - 1 {
-                        format_str.push_str(", ");
+                        format.push_str(", ");
                     }
-                    parts.push(format!(
-                        r#"printf("{format_str}", @duration{line}, @count{line}); "#,
-                        format_str = format_str,
-                        line = line
-                    ));
+                    print_exprs.push(Printf {
+                        format,
+                        args: vec![format!("@duration{}", line), format!("@count{}", line)],
+                    });
                 }
-                parts.push(r#"printf("}}\n"); }"#.to_string());
+                print_exprs.push(Printf {
+                    format: r#"}}\n"#.to_string(),
+                    args: Vec::new(),
+                });
+                program.add(Block::new(
+                    BlockType::Interval { rate_seconds: 1 },
+                    None,
+                    print_exprs,
+                ));
             }
             TraceMode::Histogram => {
-                parts.push(format!("uretprobe:{}:{:?} /@start{line}[tid]/ {{ @histogram = hist(nsecs - @start{line}[tid]); delete(@start{line}[tid]); }} ", self.program_path, function, line = line));
-                parts.push(r#"interval:s:1 { printf("{\"time\": %d, ", (nsecs - @start_time) / 1000000000); printf("\"histogram\": \""); "#.into());
-                parts.push("print(@histogram); ".to_string());
-                parts.push(r#"printf("\"}\n"); }"#.to_string())
+                program.add(Block::new(
+                    Uretprobe(frame.function),
+                    depth_condition(frame_depth + 1),
+                    vec![
+                        format!("@histogram = hist(nsecs - @start{}[tid])", line),
+                        format!("delete(@start{}[tid])", line),
+                        format!("@depth[tid] = {}", frame_depth),
+                    ],
+                ));
+
+                let print_exprs = vec![
+                    Printf {
+                        format: r#"{"time": %d, "histogram": ""#.to_string(),
+                        args: vec!["(nsecs - @start_time) / 1000000000".to_string()],
+                    },
+                    Expression::Print("@histogram".to_string()),
+                    Printf {
+                        format: r#""}\n"#.to_string(),
+                        args: Vec::new(),
+                    },
+                ];
+                program.add(Block::new(
+                    BlockType::Interval { rate_seconds: 1 },
+                    None,
+                    print_exprs,
+                ));
             }
         };
 
-        let expr = parts.concat();
+        let expr = program.compile(&self.program_path);
         log::debug!("Current bpftrace expression: {}", expr);
         // Since we hold lock we know counter won't change
         (expr, self.counter.load(Ordering::Relaxed))

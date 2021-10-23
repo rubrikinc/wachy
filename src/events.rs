@@ -5,12 +5,17 @@ use std::time::Duration;
 
 /// Events communicated to the controller
 pub enum Event {
-    /// Includes error message. The program should quit on receiving this.
-    FatalTraceError(String),
+    /// The program should quit on receiving this
+    FatalTraceError {
+        error_message: String,
+    },
     TraceData(TraceInfo),
     TraceCommandModified,
-    /// Counter, search view name, results
-    SearchResults(u64, String, Vec<(String, Option<SymbolInfo>)>),
+    SearchResults {
+        counter: u64,
+        view_name: String,
+        results: Vec<(String, Option<SymbolInfo>)>,
+    },
     SelectedFunction(FunctionName),
 }
 

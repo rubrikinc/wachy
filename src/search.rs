@@ -115,8 +115,12 @@ impl Searcher {
                         results_opt
                     };
                     results_opt.map(|r| {
-                        tx.send(Event::SearchResults(counter_val, view_name, r))
-                            .unwrap()
+                        tx.send(Event::SearchResults {
+                            counter: counter_val,
+                            view_name,
+                            results: r,
+                        })
+                        .unwrap()
                     });
                 }
                 SearchCommand::Exit => return,
