@@ -46,7 +46,7 @@ mod source_view {
         // Number of significant figures to show when formatting
         const SIGNIFICANT_FIGURES: usize = 3;
         const LATENCY_LABELS: &'static [&'static str] = &["ns", "us", "ms", "s"];
-        const FREQUENCY_LABELS: &'static [&'static str] = &["/Ks", "/s", "K/s", "M/s"];
+        const FREQUENCY_LABELS: &'static [&'static str] = &["/s", "K/s", "M/s"];
         const PENDING_STR: &'static str = "  ---";
 
         fn format_latency(&self) -> String {
@@ -59,7 +59,7 @@ mod source_view {
 
         fn format_frequency(&self) -> String {
             match self.frequency {
-                TraceState::Traced(f) => Self::format(f as f64 * 1000.0, Self::FREQUENCY_LABELS),
+                TraceState::Traced(f) => Self::format(f as f64, Self::FREQUENCY_LABELS),
                 TraceState::Pending => Self::PENDING_STR.into(),
                 TraceState::Untraced => String::new(),
             }
