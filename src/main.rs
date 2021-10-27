@@ -18,7 +18,7 @@ use std::sync::Mutex;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-const ABOUT: &'static str = r#"A tracing profiler for arbitrary binaries using eBPF.
+const ABOUT: &'static str = r#"A dynamic tracing profiler for arbitrary binaries using eBPF.
 
 Keyboard shortcuts:
 x - toggle tracing on current line
@@ -28,6 +28,9 @@ X - toggle tracing of an inlined function on current line
 <esc> - pop function off of trace stack
 h - get histogram of current function's latency
 r - restart trace, clear current aggregates
+f - add filter on function entry
+g - add filter on function exit. `$duration` can be used to refer to
+    function latency.
 "#;
 
 lazy_static::lazy_static! {

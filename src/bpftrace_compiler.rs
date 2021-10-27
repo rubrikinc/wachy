@@ -14,6 +14,7 @@ pub struct Block {
     expressions: Vec<Expression>,
 }
 
+#[derive(Copy, Clone)]
 pub enum BlockType {
     Begin,
     /// Rate in seconds
@@ -49,6 +50,10 @@ impl Program {
         self.blocks.push(block);
     }
 
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Block> {
+        self.blocks.iter_mut()
+    }
+
     pub fn compile(&self, program_path: &str) -> String {
         // TODO add tests, show examples
         self.blocks
@@ -68,6 +73,26 @@ impl Block {
             filter,
             expressions: expressions.into_iter().map(|e| e.into()).collect(),
         }
+    }
+
+    pub fn get_type(&self) -> BlockType {
+        self.block_type
+    }
+
+    pub fn add(&mut self, expression: Expression) {
+        self.expressions.push(expression);
+    }
+
+    pub fn extend<T>(&mut self, expressions: Vec<T>)
+    where
+        T: Into<Expression>,
+    {
+        self.expressions.extend(
+            expressions
+                .into_iter()
+                .map(|e| e.into())
+                .collect::<Vec<Expression>>(),
+        );
     }
 
     pub fn compile(&self, program_path: &str) -> String {
@@ -98,11 +123,14 @@ impl Block {
 impl Expression {
     pub fn compile(&self) -> String {
         match self {
-            Expression::RawExpr(ref e) => e.clone(),
+            Expression::RawExpr(ref e) => format!("{};", e),
             Expression::If {
                 ref condition,
                 ref body,
-            } => format!("if ({}) {{ {} }}", condition, Expression::compile_vec(body)),
+            } => {
+                // Must not end in `;`
+                format!("if ({}) {{ {} }}", condition, Expression::compile_vec(body))
+            }
             Expression::Printf {
                 ref format,
                 ref args,
@@ -113,17 +141,17 @@ impl Expression {
                     format!(", {}", args.join(", "))
                 };
                 format!(
-                    r#"printf("{}"{})"#,
+                    r#"printf("{}"{});"#,
                     format.replace('\"', r#"\""#),
                     args_suffix
                 )
             }
-            Expression::Print(val) => format!("print({})", val),
+            Expression::Print(val) => format!("print({});", val),
         }
     }
 
     pub fn compile_vec(expressions: &Vec<Expression>) -> String {
-        expressions.iter().map(|e| e.compile()).join("; ")
+        expressions.iter().map(|e| e.compile()).join(" ")
     }
 }
 

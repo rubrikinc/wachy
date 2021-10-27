@@ -1,10 +1,8 @@
 [package]
 name = "wachy"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 addr2line = { path = "../addr2line" }

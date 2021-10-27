@@ -422,30 +422,38 @@ impl Controller {
     /// Request user to input a filter. If it fails validation, the user is
     /// requested to correct the filter repeatedly until it passes or user
     /// cancels.
-    fn setup_user_filter(siv: &mut Cursive, initial_filter: Option<String>) {
+    fn setup_user_filter(siv: &mut Cursive, initial_filter: Option<String>, is_ret_filter: bool) {
         let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
         let function = trace_stack.get_current_function();
-        siv.add_layer(views::new_edit_view(
-            &format!(
-                "Enter bpftrace filter to apply to function {} [empty to clear]",
+        let title = if is_ret_filter {
+            format!(
+                "Enter bpftrace filter to apply on exit of {} [empty to clear]",
                 function
-            ),
+            )
+        } else {
+            format!(
+                "Enter bpftrace filter to apply on entry of {} [empty to clear]",
+                function
+            )
+        };
+        siv.add_layer(views::new_edit_view(
+            &title,
             "filter_view",
             initial_filter.as_deref(),
-            |siv, filter| {
+            move |siv, filter| {
                 siv.pop_layer();
                 if let Err(message) = siv
                     .user_data::<Controller>()
                     .unwrap()
                     .trace_stack
-                    .set_current_filter(filter.to_string())
+                    .set_current_filter(filter.to_string(), is_ret_filter)
                 {
                     let message = format!("Invalid filter:\n{}", message);
                     let filter = filter.to_string();
                     siv.add_layer(Dialog::text(message).button("OK", move |siv| {
                         siv.pop_layer();
                         // Ask user to edit filter again
-                        Controller::setup_user_filter(siv, Some(filter.clone()));
+                        Controller::setup_user_filter(siv, Some(filter.clone()), is_ret_filter);
                     }));
                 }
             },
@@ -818,8 +826,21 @@ impl Controller {
                 .user_data::<Controller>()
                 .unwrap()
                 .trace_stack
-                .get_current_filter();
-            Controller::setup_user_filter(siv, initial_filter);
+                .get_current_filter(false);
+            Controller::setup_user_filter(siv, initial_filter, false);
+        });
+        KeyHandler::add_global_callback(siv, 'g', |siv| {
+            if let Some(_) = siv.find_name::<cursive::views::EditView>("filter_view") {
+                // View is already open, make it no-op
+                return;
+            }
+
+            let initial_filter = siv
+                .user_data::<Controller>()
+                .unwrap()
+                .trace_stack
+                .get_current_filter(true);
+            Controller::setup_user_filter(siv, initial_filter, true);
         });
     }
 }

@@ -5,13 +5,12 @@ use crate::error::Error;
 use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
 use std::collections::HashMap;
-use std::fmt;
-use std::io::Read;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
+use std::{fmt, iter};
 
 /// Manages the stack of functions being traced and helps generate appropriate
 /// bpftrace programs.
@@ -52,19 +51,11 @@ pub struct FrameInfo {
     /// Function calls that are actively traced. Currently we only allow one per
     /// line.
     traced_callsites: HashMap<u32, CallInstruction>,
-    /// bpftrace filter to apply to the function
-    filter: Filter,
-}
-
-#[derive(Debug, Clone)]
-pub enum Filter {
-    None,
-    /// Filter evaluated on function entry (uprobe)
-    Filter(String),
-    /// Filter evaluated on function exit (uretprobe). E.g. something like
-    /// `$duration` has to be evaluated on return. Syntax for user to specify it
-    /// is `ret:<filter>`.
-    RetFilter(String),
+    /// bpftrace filter to apply on function entry (uprobe)
+    filter: Option<String>,
+    /// bpftrace filter to apply on function exit (uretprobe). Necessary to
+    /// support things like `$duration` which have to be evaluated on return.
+    ret_filter: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +107,8 @@ impl FrameInfo {
             line_to_callsites,
             unattached_callsites,
             traced_callsites: HashMap::new(),
-            filter: Filter::None,
+            filter: None,
+            ret_filter: None,
         }
     }
 
@@ -322,50 +314,50 @@ impl TraceStack {
         guard.tx.send(Event::TraceCommandModified).unwrap();
     }
 
-    pub fn get_current_filter(&self) -> Option<String> {
+    pub fn get_current_filter(&self, is_ret_filter: bool) -> Option<String> {
         let mut guard = self.stack.lock().unwrap();
-        match &guard.frames.last_mut().unwrap().filter {
-            Filter::None => None,
-            Filter::Filter(f) => Some(f.clone()),
-            Filter::RetFilter(f) => Some(format!("ret:{}", f)),
+        if is_ret_filter {
+            guard.frames.last_mut().unwrap().ret_filter.clone()
+        } else {
+            guard.frames.last_mut().unwrap().filter.clone()
         }
     }
 
-    /// Set the filter for the current function. Empty string removes the
-    /// filter. Checks that it is valid bpftrace syntax, returning a descriptive
-    /// error message if not.
-    pub fn set_current_filter(&self, filter: String) -> Result<(), Error> {
+    /// Set the filter for the current function, with `is_ret_filter` denoting
+    /// whether it should apply on function return (each one can be set
+    /// independently). Empty string removes the filter. Checks that it is valid
+    /// bpftrace syntax, returning a descriptive error message if not.
+    pub fn set_current_filter(&self, filter: String, is_ret_filter: bool) -> Result<(), Error> {
         let mut guard = self.stack.lock().unwrap();
         let frame = guard.frames.last_mut().unwrap();
+        let frame_filter = if is_ret_filter {
+            &mut frame.ret_filter
+        } else {
+            &mut frame.filter
+        };
         if filter.is_empty() {
-            frame.filter = Filter::None;
+            *frame_filter = None;
             return Ok(());
         }
 
-        let prev_filter = frame.filter.clone();
-        frame.filter = if filter.starts_with("ret:") {
-            Filter::RetFilter(filter)
-        } else {
-            Filter::Filter(filter)
-        };
+        let prev_filter = frame_filter.clone();
+        *frame_filter = Some(filter);
         // Run bpftrace in dry run mode to ensure filter compiles
-        let mut program = std::process::Command::new("bpftrace")
+        let output = std::process::Command::new("bpftrace")
             .args(&["-d", "-e", &self.get_bpftrace_expr_locked(&guard).0])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .output()
             .expect("bpftrace failed to start");
-        let status = program.wait().unwrap();
-        if !status.success() {
-            // Restore old filter on error. Can't reference `frame` directly
-            // here due to lifetimes.
-            guard.frames.last_mut().unwrap().filter = prev_filter;
-            let mut stderr = String::new();
-            match program.stderr.unwrap().read_to_string(&mut stderr) {
-                Err(err) => return Err(format!("Failed to read bpftrace stderr: {:?}", err).into()),
-                _ => (),
+        if !output.status.success() {
+            // Restore old filter on error. Can't reference `frame_filter`
+            // directly here due to lifetimes.
+            if is_ret_filter {
+                guard.frames.last_mut().unwrap().ret_filter = prev_filter;
+            } else {
+                guard.frames.last_mut().unwrap().filter = prev_filter;
             }
-            Err(stderr.into())
+            Err(String::from_utf8(output.stderr).unwrap().into())
         } else {
             self.counter.fetch_add(1, Ordering::Release);
             guard.tx.send(Event::TraceCommandModified).unwrap();
@@ -382,61 +374,109 @@ impl TraceStack {
     }
 
     fn get_bpftrace_expr_locked(&self, guard: &MutexGuard<Frames>) -> (String, u64) {
-        // We use line number in variable naming to identify the results
+        // General approach to codegen:
+        // 1. Maintain `@depth` on function entry and exit to ensure we are
+        //    following the trace stack.
+        // 2. Source line number is used in variable naming to identify the
+        //    traces.
+        // 3. In `TraceMode::Line`, results are stored as duration and count.
+        // 4. Current thread's trace info is stored in `_tmp` vars, only after
+        //    we verify all the `RetFilter`s we move it to the global vars which
+        //    are output.
         let frames = &guard.frames;
+        let num_retfilters: u32 = frames
+            .iter()
+            .map(|f| match f.ret_filter {
+                Some(_) => 1,
+                None => 0,
+            })
+            .sum();
+
         let mut program = bpftrace_compiler::Program::new();
         program.add(Block::new(
             BlockType::Begin,
             None,
-            vec!["@start_time = nsecs", "@depth[-1] = 0"],
+            vec![
+                "@start_time = nsecs",
+                "@depth[-1] = 0",
+                "@matched_retfilters[-1] = 0",
+            ],
         ));
 
-        let depth_condition = |depth| Some(format!("@depth[tid] == {}", depth));
-        for (i, frame) in frames.iter().enumerate() {
-            if i != frames.len() - 1 {
-                program.add(Block::new(
-                    Uprobe(frame.function),
-                    depth_condition(i),
-                    vec![format!("@depth[tid] = {}", i + 1)],
-                ));
-                program.add(Block::new(
-                    Uretprobe(frame.function),
-                    depth_condition(i + 1),
-                    vec![format!("@depth[tid] = {}", i)],
-                ));
-            }
+        let depth_condition =
+            |depth: usize| -> Option<String> { Some(format!("@depth[tid] == {}", depth)) };
+        for (i, frame) in frames.iter().take(frames.len() - 1).enumerate() {
+            program.add(Block::new(
+                Uprobe(frame.function),
+                depth_condition(i),
+                TraceStack::add_user_filter(
+                    &frame.filter,
+                    false,
+                    vec![
+                        format!("@depth[tid] = {}", i + 1),
+                        format!("@start_frame{}[tid] = nsecs", i),
+                    ],
+                ),
+            ));
+            program.add(Block::new(
+                Uretprobe(frame.function),
+                depth_condition(i + 1),
+                TraceStack::add_user_filter(
+                    &frame.ret_filter,
+                    true,
+                    vec![
+                        format!("@depth[tid] = {}", i),
+                        format!("$duration = nsecs - @start_frame{}[tid]", i),
+                    ],
+                ),
+            ));
         }
 
+        let last_frame = frames.last().unwrap();
+        let lines: Vec<u32> = last_frame
+            .traced_callsites
+            .iter()
+            .map(|(line, _)| *line)
+            .chain(iter::once(last_frame.source_line))
+            .collect();
         let frame_depth = frames.len() - 1;
-        let frame = frames.last().unwrap();
-        let line = frame.source_line;
-        let mut lines = vec![line];
-        let function = frame.function;
+        let line = last_frame.source_line;
+        let function = last_frame.function;
 
-        let filter = ""; // TODO
         program.add(Block::new(
             Uprobe(function),
             depth_condition(frame_depth),
-            vec![
-                format!("@start{}[tid] = nsecs", line),
-                format!("@depth[tid] = {}", frame_depth + 1),
-            ],
+            TraceStack::add_user_filter(
+                &last_frame.filter,
+                false,
+                vec![
+                    format!("@start{}[tid] = nsecs", line),
+                    format!("@depth[tid] = {}", frame_depth + 1),
+                ],
+            ),
         ));
         match guard.mode {
             TraceMode::Line => {
                 program.add(Block::new(
                     Uretprobe(function),
                     depth_condition(frame_depth + 1),
-                    vec![
-                        format!("@duration{line} += nsecs - @start{line}[tid]", line = line),
-                        format!("@count{} += 1", line),
-                        format!("delete(@start{}[tid])", line),
-                        format!("@depth[tid] = {}", frame_depth),
-                    ],
+                    TraceStack::add_user_filter(
+                        &last_frame.ret_filter,
+                        true,
+                        vec![
+                            format!(
+                                "@duration_tmp{line}[tid] += nsecs - @start{line}[tid]",
+                                line = line
+                            ),
+                            format!("$duration = @duration_tmp{}[tid]", line),
+                            format!("@count_tmp{}[tid] += 1", line),
+                            format!("delete(@start{}[tid])", line),
+                            format!("@depth[tid] = {}", frame_depth),
+                        ],
+                    ),
                 ));
 
-                for (&line, callsite) in &frame.traced_callsites {
-                    lines.push(line);
+                for (&line, callsite) in &last_frame.traced_callsites {
                     program.add(Block::new(
                         UprobeOffset(function, callsite.relative_ip),
                         depth_condition(frame_depth + 1),
@@ -445,13 +485,16 @@ impl TraceStack {
                     // Ensure the tracepoint at the end of the call is only
                     // triggered if we traced the start.
                     let call_done_filter = depth_condition(frame_depth + 1)
-                        .map(|c| c + &format!(" && start{}[tid]", line));
+                        .map(|c| c + &format!(" && @start{}[tid]", line));
                     program.add(Block::new(
                         UprobeOffset(function, callsite.relative_ip + callsite.length as u32),
                         call_done_filter,
                         vec![
-                            format!("@duration{line} += nsecs - @start{line}[tid]", line = line),
-                            format!("@count{} += 1", line),
+                            format!(
+                                "@duration_tmp{line}[tid] += nsecs - @start{line}[tid]",
+                                line = line
+                            ),
+                            format!("@count_tmp{}[tid] += 1", line),
                             format!("delete(@start{}[tid])", line),
                         ],
                     ));
@@ -483,13 +526,18 @@ impl TraceStack {
             }
             TraceMode::Histogram => {
                 program.add(Block::new(
-                    Uretprobe(frame.function),
+                    Uretprobe(last_frame.function),
                     depth_condition(frame_depth + 1),
-                    vec![
-                        format!("@histogram = hist(nsecs - @start{}[tid])", line),
-                        format!("delete(@start{}[tid])", line),
-                        format!("@depth[tid] = {}", frame_depth),
-                    ],
+                    TraceStack::add_user_filter(
+                        &last_frame.ret_filter,
+                        true,
+                        vec![
+                            format!("@duration_tmp[tid] = nsecs - @start{}[tid]", line),
+                            "$duration = @duration_tmp[tid]".to_string(),
+                            format!("delete(@start{}[tid])", line),
+                            format!("@depth[tid] = {}", frame_depth),
+                        ],
+                    ),
                 ));
 
                 let print_exprs = vec![
@@ -511,10 +559,102 @@ impl TraceStack {
             }
         };
 
+        // Add expression to commit `_tmp` vars to their final version when
+        // appropriate and always clear. This should happen in the first/topmost
+        // retprobe, which can be in parent trace frame, or if there are none
+        // then `last_frame`, so easiest to patch it up at the end.
+        let last_retprobe = program
+            .iter_mut()
+            .find(|b| match b.get_type() {
+                Uretprobe(_) => true,
+                _ => false,
+            })
+            .unwrap();
+        match guard.mode {
+            TraceMode::Line => {
+                last_retprobe.add(Expression::If {
+                    condition: format!("@matched_retfilters[tid] == {}", num_retfilters),
+                    body: lines
+                        .iter()
+                        .map(|line| {
+                            format!(
+                                "@duration{line} += @duration_tmp{line}[tid]; @count{line} += @count_tmp{line}[tid]",
+                                line = line
+                            )
+                        })
+                        .map(|e| e.into())
+                        .collect(),
+                });
+                last_retprobe.extend(
+                    lines
+                        .iter()
+                        .map(|line| {
+                            format!(
+                                "delete(@duration_tmp{line}[tid]); delete(@count_tmp{line}[tid])",
+                                line = line
+                            )
+                        })
+                        .chain(iter::once("delete(@matched_retfilters[tid])".to_string()))
+                        .collect(),
+                );
+            }
+            TraceMode::Histogram => {
+                last_retprobe.add(Expression::If {
+                    // We may not have actually reached the place where
+                    // `@duration_tmp` is set, so check that it is non-zero.
+                    // TODO are we guaranteed duration will be non-zero when
+                    // actually hit?
+                    condition: format!(
+                        "@matched_retfilters[tid] == {} && @duration_tmp[tid]",
+                        num_retfilters
+                    ),
+                    body: vec!["@histogram = hist(@duration_tmp[tid])".into()],
+                });
+                last_retprobe.extend(vec![
+                    "delete(@duration_tmp[tid])",
+                    "delete(@matched_retfilters[tid])",
+                ]);
+            }
+        };
+
         let expr = program.compile(&self.program_path);
         log::debug!("Current bpftrace expression: {}", expr);
         // Since we hold lock we know counter won't change
         (expr, self.counter.load(Ordering::Relaxed))
+    }
+
+    fn add_user_filter<T>(
+        filter: &Option<String>,
+        is_ret_filter: bool,
+        exprs: Vec<T>,
+    ) -> Vec<Expression>
+    where
+        T: Into<Expression>,
+    {
+        let mut exprs = exprs.into_iter().map(|e| e.into()).collect();
+        match filter {
+            None => exprs,
+            Some(f) => {
+                // If this is a ret filter, we need to update depth (i.e. run
+                // `exprs`) unconditionally, but maintain
+                // `@matched_retfilters[tid]` depending on the filter. For an
+                // entry filter, we skip updating depth if it doesn't match.
+
+                // TODO need to use bitwise `|=` rather than ++
+                if is_ret_filter {
+                    exprs.push(Expression::If {
+                        condition: f.clone(),
+                        body: vec!["@matched_retfilters[tid] += 1".into()],
+                    });
+                    exprs
+                } else {
+                    vec![Expression::If {
+                        condition: f.clone(),
+                        body: exprs,
+                    }]
+                }
+            }
+        }
     }
 
     /// Parse bpftrace output
