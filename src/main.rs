@@ -26,8 +26,8 @@ X - toggle tracing of an inlined function on current line
 <enter> - push current call onto trace stack
 > (shift+.) - specify arbitrary function to push onto trace stack
 <esc> - pop function off of trace stack
-h - get histogram of current function's latency
 r - restart trace, clear current aggregates
+h - get histogram of current function's latency
 f - add filter on function entry
 g - add filter on function exit. `$duration` can be used to refer to
     function latency.
