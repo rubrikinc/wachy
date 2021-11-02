@@ -33,6 +33,12 @@ pub enum TraceInfoMode {
     Lines(HashMap<u32, TraceCumulative>),
     /// String representation of histogram values
     Histogram(String),
+    Breakdown {
+        last_frame_trace: TraceCumulative,
+        /// Vector of cumulative values, each entry corresponding to
+        /// `TraceStack.breakdown_functions`.
+        breakdown_traces: Vec<TraceCumulative>,
+    },
 }
 
 pub struct TraceCumulative {

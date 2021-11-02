@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::events;
 use crate::events::{Event, TraceInfoMode};
 use crate::program;
 use crate::program::{FunctionName, Program};
@@ -17,7 +18,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use zydis::enums::generated::{Mnemonic, Register};
 
 pub struct Controller {
@@ -204,19 +205,23 @@ impl Controller {
                 {
                     return Ok(());
                 }
+                let data_time = data.time.as_secs_f32();
+                let get_latency = |t: &events::TraceCumulative| -> Duration {
+                    t.duration / u32::try_from(t.count).unwrap()
+                };
+                let get_frequency =
+                    |t: &events::TraceCumulative| -> f32 { t.count as f32 / data_time };
+
                 match data.traces {
                     TraceInfoMode::Lines(ref lines) => {
                         siv.call_on_name("source_view", |sview: &mut views::SourceView| {
                             for (line, info) in lines {
                                 let latency = if info.count != 0 {
-                                    TraceState::Traced(
-                                        info.duration / u32::try_from(info.count).unwrap(),
-                                    )
+                                    TraceState::Traced(get_latency(info))
                                 } else {
                                     TraceState::Untraced
                                 };
-                                let frequency =
-                                    TraceState::Traced(info.count as f32 / data.time.as_secs_f32());
+                                let frequency = TraceState::Traced(get_frequency(info));
                                 Self::set_line_state(sview, *line, latency, frequency);
                             }
                         });
@@ -227,7 +232,7 @@ impl Controller {
                             .unwrap()
                             .trace_stack
                             .get_current_function();
-                        siv.call_on_name("histogram_view", |hview: &mut views::HistogramView| {
+                        siv.call_on_name("histogram_view", |hview: &mut views::TextDialogView| {
                             let hist_text = if !hist.is_empty() {
                                 hist
                             } else {
@@ -237,6 +242,50 @@ impl Controller {
                                 "Latency histogram in nanoseconds for {}:\n{}",
                                 function, hist_text
                             ));
+                        });
+                    }
+                    TraceInfoMode::Breakdown {
+                        last_frame_trace,
+                        breakdown_traces,
+                    } => {
+                        let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                        let last_function = trace_stack.get_current_function();
+                        let format_latency = |t: &events::TraceCumulative| -> String {
+                            if t.count != 0 {
+                                views::formatting::format_latency(get_latency(t))
+                            } else {
+                                "N/A".to_string()
+                            }
+                        };
+                        let format_frequency = |t: &events::TraceCumulative| -> String {
+                            views::formatting::format_frequency(get_frequency(t))
+                        };
+                        let mut text = vec![
+                            format!("Breakdown information for {}:", last_function),
+                            format!(
+                                "Latency: {}, Frequency: {}",
+                                format_latency(&last_frame_trace),
+                                format_frequency(&last_frame_trace)
+                            ),
+                        ];
+
+                        let last_duration = last_frame_trace.duration;
+                        trace_stack
+                            .get_breakdown_functions()
+                            .iter()
+                            .zip(breakdown_traces.iter())
+                            .for_each(|(function, trace)| {
+                                text.push(format!("Function {}", function));
+                                text.push(format!(
+                                    "Latency: {}, Frequency: {}, Percentage: {:.1}",
+                                    format_latency(&trace),
+                                    format_frequency(&trace),
+                                    (trace.duration.as_secs_f64() / last_duration.as_secs_f64())
+                                        * (100 as f64)
+                                ));
+                            });
+                        siv.call_on_name("breakdown_view", |bview: &mut views::TextDialogView| {
+                            bview.set_content(text.join("\n"));
                         });
                     }
                 }
@@ -772,9 +821,11 @@ impl Controller {
                         .pop_layer()
                         .expect("Pop unexpectedly empty despite len > 1");
 
-                    // Check if this is histogram view - we need to reset mode
-                    // if so.
-                    if views::is_histogram_view(view, "histogram_view") {
+                    // Check if this is histogram or breakdown view - we need to
+                    // reset mode if so.
+                    if views::is_text_dialog_view(&view, "histogram_view")
+                        || views::is_text_dialog_view(&view, "breakdown_view")
+                    {
                         siv.user_data::<Controller>()
                             .unwrap()
                             .trace_stack
@@ -797,7 +848,7 @@ impl Controller {
         );
 
         KeyHandler::add_global_callback(siv, 'h', |siv| {
-            if let Some(_) = siv.find_name::<views::HistogramView>("histogram_view") {
+            if let Some(_) = siv.find_name::<views::TextDialogView>("histogram_view") {
                 // View is already open, make it no-op
                 return;
             }
@@ -805,7 +856,7 @@ impl Controller {
             let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
             trace_stack.set_mode(TraceMode::Histogram);
             let function = trace_stack.get_current_function();
-            siv.add_layer(views::new_histogram_view(
+            siv.add_layer(views::new_text_dialog_view(
                 &format!("Gathering latency histogram for {}...", function),
                 "histogram_view",
                 |siv| {
@@ -841,6 +892,48 @@ impl Controller {
                 .trace_stack
                 .get_current_filter(true);
             Controller::setup_user_filter(siv, initial_filter, true);
+        });
+
+        KeyHandler::add_global_callback(siv, 'b', |siv| {
+            let controller = siv.user_data::<Controller>().unwrap();
+            let initial_results = vec![("Type to search".to_string(), None)];
+            controller
+                .searcher
+                .setup_search(initial_results.clone(), Vec::new());
+            let search_view = views::new_search_view(
+                "Select the functions to trace",
+                initial_results,
+                move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    controller.searcher.search(view_name, search, n_results);
+                },
+                move |siv: &mut Cursive, symbol: &SymbolInfo| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    // TODO cancel any pending searches
+                    if controller.program.is_dynamic_symbol(symbol) {
+                        // TODO show error for dyn fn
+                    } else {
+                        // TODO need way better layout, way to exit, remove fns etc
+                        if symbol.name.0 == "main" {
+                            controller.trace_stack.set_mode(TraceMode::Breakdown);
+                            let current_function = controller.trace_stack.get_current_function();
+                            siv.add_layer(views::new_text_dialog_view(
+                                &format!("Gathering latency breakdown for {}...", current_function),
+                                "breakdown_view",
+                                |siv| {
+                                    let trace_stack =
+                                        &siv.user_data::<Controller>().unwrap().trace_stack;
+                                    trace_stack.set_mode(TraceMode::Line);
+                                    siv.pop_layer();
+                                },
+                            ));
+                        } else {
+                            controller.trace_stack.add_breakdown_function(symbol.name);
+                        }
+                    }
+                },
+            );
+            siv.add_layer(search_view);
         });
     }
 }

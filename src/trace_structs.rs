@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::bpftrace_compiler::BlockType::{Uprobe, UprobeOffset, Uretprobe};
 use crate::bpftrace_compiler::Expression::Printf;
 use crate::bpftrace_compiler::{self, Block, BlockType, Expression};
@@ -23,6 +25,8 @@ pub struct TraceStack {
 
 pub struct Frames {
     mode: TraceMode,
+    /// When in Breakdown mode, trace these functions
+    breakdown_functions: Vec<FunctionName>,
     /// Guaranteed to be non-empty
     frames: Vec<FrameInfo>,
     /// Gets notified whenever the stack is modified (i.e. trace command
@@ -36,6 +40,8 @@ pub enum TraceMode {
     Line,
     /// Trace histogram of latency for the current function
     Histogram,
+    /// Trace amount of time spent in each of the specified nest functions
+    Breakdown,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +96,8 @@ struct TraceOutput {
     // Map from (stringified) line to (duration, count)
     lines: Option<HashMap<String, (u64, u64)>>,
     histogram: Option<String>,
+    // Map from (stringified) index to (duration, count)
+    breakdown: Option<HashMap<String, (u64, u64)>>,
 }
 
 impl FrameInfo {
@@ -218,6 +226,7 @@ impl TraceStack {
     pub fn new(program_path: String, frame: FrameInfo, tx: Sender<Event>) -> TraceStack {
         let stack = Mutex::new(Frames {
             mode: TraceMode::Line,
+            breakdown_functions: Vec::new(),
             frames: vec![frame],
             tx,
         });
@@ -365,6 +374,16 @@ impl TraceStack {
         }
     }
 
+    pub fn add_breakdown_function(&self, function: FunctionName) {
+        let mut guard = self.stack.lock().unwrap();
+        guard.breakdown_functions.push(function);
+    }
+
+    pub fn get_breakdown_functions(&self) -> Vec<FunctionName> {
+        let guard = self.stack.lock().unwrap();
+        guard.breakdown_functions.clone()
+    }
+
     /// Get appropriate bpftrace expression for current state, along with
     /// current counter value.
     /// Panics if called with empty stack
@@ -455,6 +474,7 @@ impl TraceStack {
                 ],
             ),
         ));
+
         match guard.mode {
             TraceMode::Line => {
                 program.add(Block::new(
@@ -557,6 +577,78 @@ impl TraceStack {
                     print_exprs,
                 ));
             }
+            TraceMode::Breakdown => {
+                program.add(Block::new(
+                    Uretprobe(function),
+                    depth_condition(frame_depth + 1),
+                    TraceStack::add_user_filter(
+                        &last_frame.ret_filter,
+                        true,
+                        vec![
+                            format!("@duration_tmp[tid] += nsecs - @start{}[tid]", line),
+                            "$duration = @duration_tmp[tid]".to_string(),
+                            "@count_tmp[tid] += 1".to_string(),
+                            format!("delete(@start{}[tid])", line),
+                            format!("@depth[tid] = {}", frame_depth),
+                        ],
+                    ),
+                ));
+                for (i, &function) in guard.breakdown_functions.iter().enumerate() {
+                    program.add(Block::new(
+                        Uprobe(function),
+                        depth_condition(frame_depth + 1),
+                        vec![format!("@start_breakdown{}[tid] = nsecs", i)],
+                    ));
+                    program.add(Block::new(
+                        Uretprobe(function),
+                        depth_condition(frame_depth + 1),
+                        vec![
+                            format!(
+                                "@duration_breakdown_tmp{i}[tid] += nsecs - @start_breakdown{i}[tid]",
+                                i = i
+                            ),
+                            format!("@count_breakdown_tmp{}[tid] += 1", i),
+                            format!("delete(@start_breakdown{}[tid])", i),
+                        ],
+                    ));
+                }
+
+                let mut print_exprs = vec![Printf {
+                    format: r#"{"time": %d, "breakdown": {"#.to_string(),
+                    args: vec!["(nsecs - @start_time) / 1000000000".to_string()],
+                }];
+                let num_breakdown_functions = guard.breakdown_functions.len();
+                let mut format = r#""last_frame": [%lld, %lld]"#.to_string();
+                if num_breakdown_functions > 0 {
+                    format.push_str(", ");
+                }
+                print_exprs.push(Printf {
+                    format,
+                    args: vec!["@duration".to_string(), "@count".to_string()],
+                });
+                for i in 0..num_breakdown_functions {
+                    let mut format = format!(r#""{}": [%lld, %lld]"#, i);
+                    if i != num_breakdown_functions - 1 {
+                        format.push_str(", ");
+                    }
+                    print_exprs.push(Printf {
+                        format,
+                        args: vec![
+                            format!("@duration_breakdown{}", i),
+                            format!("@count_breakdown{}", i),
+                        ],
+                    });
+                }
+                print_exprs.push(Printf {
+                    format: r#"}}\n"#.to_string(),
+                    args: Vec::new(),
+                });
+                program.add(Block::new(
+                    BlockType::Interval { rate_seconds: 1 },
+                    None,
+                    print_exprs,
+                ));
+            }
         };
 
         // Add expression to commit `_tmp` vars to their final version when
@@ -615,6 +707,45 @@ impl TraceStack {
                     "delete(@matched_retfilters[tid])",
                 ]);
             }
+            TraceMode::Breakdown => {
+                last_retprobe.add(Expression::If {
+                    // We may not have actually reached the place where
+                    // `@duration_tmp` is set, so check that it is non-zero.
+                    // TODO are we guaranteed duration will be non-zero when
+                    // actually hit?
+                    condition: format!(
+                        "@matched_retfilters[tid] == {}",
+                        num_retfilters
+                    ),
+                    body: guard
+                        .breakdown_functions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            format!(
+                                "@duration_breakdown{i} += @duration_breakdown_tmp{i}[tid]; @count_breakdown{i} += @count_breakdown_tmp{i}[tid]",
+                                i = i
+                            )
+                        })
+                        .chain(iter::once("@duration += @duration_tmp[tid]; @count += @count_tmp[tid]".to_string()))
+                        .map(|e| e.into())
+                        .collect(),
+                });
+                last_retprobe.extend(
+                    guard
+                        .breakdown_functions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            format!(
+                                "delete(@duration_breakdown_tmp{i}[tid]); delete(@count_breakdown_tmp{i}[tid])",
+                                i = i
+                            )
+                        })
+                        .chain(iter::once("delete(@matched_retfilters[tid]); delete(@duration_tmp[tid]); delete(@count_tmp[tid])".to_string()))
+                        .collect(),
+                );
+            }
         };
 
         let expr = program.compile(&self.program_path);
@@ -663,23 +794,39 @@ impl TraceStack {
         // JSON.
         let line = line.replace("\n", "\\n");
         let info: TraceOutput = serde_json::from_str(&line)?;
-        let traces = match info.lines {
-            Some(lines) => TraceInfoMode::Lines(
+        let tuple_to_trace_cumulative = |tuple: (u64, u64)| -> TraceCumulative {
+            TraceCumulative {
+                duration: Duration::from_nanos(tuple.0),
+                count: tuple.1,
+            }
+        };
+        let traces = if let Some(lines) = info.lines {
+            TraceInfoMode::Lines(
                 lines
                     .into_iter()
                     .map(|(line, value)| {
                         // If JSON parsing succeeded we assume it is valid output, so `line` must be valid to parse
                         (
                             line.parse::<u32>().unwrap(),
-                            TraceCumulative {
-                                duration: Duration::from_nanos(value.0),
-                                count: value.1,
-                            },
+                            tuple_to_trace_cumulative(value),
                         )
                     })
                     .collect(),
-            ),
-            None => TraceInfoMode::Histogram(info.histogram.unwrap()),
+            )
+        } else if let Some(histogram) = info.histogram {
+            TraceInfoMode::Histogram(histogram)
+        } else {
+            let breakdown = info.breakdown.unwrap();
+            TraceInfoMode::Breakdown {
+                last_frame_trace: tuple_to_trace_cumulative(breakdown["last_frame"]),
+                breakdown_traces: breakdown
+                    .into_iter()
+                    .filter(|(k, _)| k != "last_frame")
+                    .map(|(i, value)| (i.parse::<u32>().unwrap(), tuple_to_trace_cumulative(value)))
+                    .sorted_by_key(|(i, _)| *i)
+                    .map(|(_, v)| v)
+                    .collect(),
+            }
         };
         Ok(TraceInfo {
             counter,

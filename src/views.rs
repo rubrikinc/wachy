@@ -17,6 +17,55 @@ pub enum TraceState<T> {
     Traced(T),
 }
 
+pub mod formatting {
+    // Number of significant figures to show when formatting
+    const SIGNIFICANT_FIGURES: usize = 3;
+    const LATENCY_LABELS: &'static [&'static str] = &["ns", "us", "ms", "s"];
+    const FREQUENCY_LABELS: &'static [&'static str] = &["/s", "K/s", "M/s"];
+
+    /// Given labels representing increasing order of magnitude values,
+    /// format to display SIGNIFICANT_FIGURES.
+    fn format(mut value: f64, labels: &'static [&'static str]) -> String {
+        // TODO add tests
+        let n_decimals = |value: f64| -> usize {
+            SIGNIFICANT_FIGURES.saturating_sub(value.abs().log10() as usize + 1)
+        };
+
+        for (i, label) in labels.iter().enumerate() {
+            if value < 1000.0 {
+                if value == 0.0 {
+                    return format!("0{}", label);
+                } else {
+                    return format!("{:.*}{}", n_decimals(value), value, label);
+                }
+            } else if i == labels.len() - 1 {
+                return format!("{:.0}{}", value, label);
+            }
+
+            value /= 1000.0;
+        }
+        unreachable!();
+    }
+
+    pub fn format_latency(l: std::time::Duration) -> String {
+        format(l.as_nanos() as f64, LATENCY_LABELS)
+    }
+
+    pub fn format_frequency(freq_per_sec: f32) -> String {
+        format(freq_per_sec as f64, FREQUENCY_LABELS)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_formatting() {
+            assert_eq!(format_frequency(0.02934924), "0.03/s");
+        }
+    }
+}
+
 mod source_view {
     use super::TraceState;
     use std::time::Duration;
@@ -43,15 +92,11 @@ mod source_view {
     }
 
     impl Item {
-        // Number of significant figures to show when formatting
-        const SIGNIFICANT_FIGURES: usize = 3;
-        const LATENCY_LABELS: &'static [&'static str] = &["ns", "us", "ms", "s"];
-        const FREQUENCY_LABELS: &'static [&'static str] = &["/s", "K/s", "M/s"];
         const PENDING_STR: &'static str = "  ---";
 
         fn format_latency(&self) -> String {
             match self.latency {
-                TraceState::Traced(l) => Self::format(l.as_nanos() as f64, Self::LATENCY_LABELS),
+                TraceState::Traced(l) => super::formatting::format_latency(l),
                 TraceState::Pending => Self::PENDING_STR.into(),
                 TraceState::Untraced => String::new(),
             }
@@ -59,34 +104,10 @@ mod source_view {
 
         fn format_frequency(&self) -> String {
             match self.frequency {
-                TraceState::Traced(f) => Self::format(f as f64, Self::FREQUENCY_LABELS),
+                TraceState::Traced(f) => super::formatting::format_frequency(f),
                 TraceState::Pending => Self::PENDING_STR.into(),
                 TraceState::Untraced => String::new(),
             }
-        }
-
-        /// Given labels representing increasing order of magnitude values,
-        /// format to display SIGNIFICANT_FIGURES.
-        fn format(mut value: f64, labels: &'static [&'static str]) -> String {
-            // TODO add tests
-            let n_decimals = |value: f64| -> usize {
-                Item::SIGNIFICANT_FIGURES.saturating_sub(value.abs().log10() as usize + 1)
-            };
-
-            for (i, label) in labels.iter().enumerate() {
-                if value < 1000.0 {
-                    if value == 0.0 {
-                        return format!("0{}", label);
-                    } else {
-                        return format!("{:.*}{}", n_decimals(value), value, label);
-                    }
-                } else if i == labels.len() - 1 {
-                    return format!("{:.0}{}", value, label);
-                }
-
-                value /= 1000.0;
-            }
-            unreachable!();
         }
     }
 
@@ -108,16 +129,6 @@ mod source_view {
             self.line_number.cmp(&other.line_number)
         }
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_formatting() {
-            assert_eq!(Item::format(0.02934924, Item::FREQUENCY_LABELS), "0.03/ms");
-        }
-    }
 }
 
 pub type SourceView = cursive_table_view::TableView<source_view::Item, source_view::Column>;
@@ -127,7 +138,7 @@ pub fn new_source_view() -> SourceView {
     use source_view::Column;
     let line_num_width = source_view::LINE_NUMBER_LEN + source_view::CALL_ANNOTATION_LEN + 1;
     let mut table = cursive_table_view::TableView::<source_view::Item, Column>::new()
-        .column(Column::Latency, "Duration", |c| c.width(8))
+        .column(Column::Latency, "Latency", |c| c.width(8))
         .column(Column::Frequency, "Frequency", |c| c.width(8))
         .column(Column::LineNumber, "", |c| {
             c.width(line_num_width).align(cursive::align::HAlign::Right)
@@ -313,9 +324,9 @@ pub fn new_dialog(text: &str) -> Dialog {
     })
 }
 
-pub type HistogramView = TextView;
+pub type TextDialogView = TextView;
 
-pub fn new_histogram_view<F>(text: &str, name: &str, close_fn: F) -> Dialog
+pub fn new_text_dialog_view<F>(text: &str, name: &str, close_fn: F) -> Dialog
 where
     F: 'static + Fn(&mut Cursive),
 {
@@ -323,11 +334,11 @@ where
 }
 
 /// Check if this is a view created by `new_histogram_view` with the given `name`
-pub fn is_histogram_view(view: Box<dyn cursive::View>, name: &str) -> bool {
+pub fn is_text_dialog_view(view: &Box<dyn cursive::View>, name: &str) -> bool {
     if let Some(dialog_view) = view.downcast_ref::<Dialog>() {
         if let Some(named_view) = dialog_view
             .get_content()
-            .downcast_ref::<cursive::views::NamedView<HistogramView>>()
+            .downcast_ref::<cursive::views::NamedView<TextDialogView>>()
         {
             if named_view.name() == name {
                 return true;
