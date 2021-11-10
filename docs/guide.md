@@ -1,9 +1,8 @@
 # Guide
 
-NOTE: wachy is still rather young and of alpha/beta quality. While it should
-still be safe thanks to the sandboxing of eBPF programs, it is a bit rough
-around the edges with some known issues. If you run into any problems please
-open an issue.
+NOTE: wachy is still rather young. While it should be safe thanks to the
+sandboxing of eBPF programs, some functionality/edge cases are not fully
+implemented yet. If you run into any problems please open an issue.
 
 - [Starting wachy](#starting-wachy)
   - [Source View](#source-view)
@@ -29,8 +28,8 @@ within it that you would like to trace.
 ```
 # wachy ./program foo
 ```
-If there are multiple matches it will ask you to select one, otherwise it will
-drop into source view.
+If there are multiple matches for the function it will ask you to select one,
+otherwise it will drop into source view.
 
 Wachy will trace the function across all running instances of the binary - this
 is how eBPF works. You can add a `pid`-based
@@ -48,7 +47,7 @@ simply place the separate debug file in the current working directory.
 
 ## Source View
 
-TODO img
+![Overview screenshot](images/overview_screenshot.png?raw=true)
 
 Wachy figures out the source information corresponding to the traced function
 and displays it in a TUI. It displays live (since it started the current trace)
@@ -63,8 +62,9 @@ production system where you don't want to copy over the source code, but can
 still compare line numbers against the actual code locally.
 </details>
 
-The general debugging approach that wachy is designed for is iterative drilldown
-of function calls. The features below go into more detail on ways to do this.
+The debugging approach that wachy is primarily designed for is iterative
+drilldown of function calls. The features below go into more detail on ways to
+do this.
 
 # Features/Keyboard Shortcuts
 
@@ -72,10 +72,10 @@ A short summary of these is displayed with `wachy -h` too.
 
 ## <kbd>x</kbd>: Trace Line
 
-Toggle tracing a function call on the current line. Line numbers with a `▶` next
-to them indicate lines corresponding to call instructions, thus they can be
-traced. If there are multiple calls on the same line, wachy will ask to pick
-one. Currently only one call per line can be traced at a time.
+Toggle tracing a function call on the current line. Line numbers with a `▶`
+character next to them indicate lines corresponding to call instructions, thus
+they can be traced. If there are multiple calls on the same line, wachy will ask
+to pick one. Currently only one call per line can be traced at a time.
 
 ## <kbd>X</kbd>: Trace Inlined Function
 
@@ -94,17 +94,17 @@ Push a function call on the current line onto the trace stack.
 
 There are 3 types of function calls:
 
-TODO img
+![Function types](images/function_types.png?raw=true)
 
-1. Direct call - a specific address/function in the program. Wachy can
+1. Indirect/Register call - a function that can change at runtime. This is used
+   for e.g. calling function pointers or C++ virtual function calls. Wachy does
+   not know which function this corresponds to[^1] so it will ask you to specify
+   the function (same as [`>`](#kbdkbd-specify-function-to-push-onto-stack)).
+2. Direct call - a specific address/function in the program. Wachy can
    automatically find the corresponding function.
-2. Dynamic/Indirect call - a function in a dynamically linked library. Wachy
-   currently supports [tracing](#kbdxkbd-trace-line) such calls but not pushing them
-   onto the stack.
-3. Register call - a function that can change at runtime. This is used for e.g.
-   calling function pointers or C++ virtual function calls. Wachy does not know
-   which function this corresponds to[^1] so it will ask you to specify the
-   function (same as [`>`](#kbdkbd-specify-function-to-push-onto-stack)).
+3. Dynamic call - a function in a dynamically linked library. Wachy currently
+   supports [tracing](#kbdxkbd-trace-line) such calls but not pushing them onto
+   the stack.
 
 ### Trace Stack
 
@@ -117,7 +117,7 @@ to trace a deeply nested function with
 
 ## <kbd>></kbd>: Specify Function to Push Onto Stack
 
-(<kbd><kbd>shift</kbd>+<kbd>.</kbd></kbd>) [Select](#function-matching) any
+(<kbd><kbd>shift</kbd>+<kbd>.</kbd></kbd> on most keyboards) [Select](#function-matching) any
 function in the program to push onto the trace stack. See [Trace
 Stack](#trace-stack) for more details.
 
@@ -130,7 +130,7 @@ parent frame.
 
 Display a histogram of function latency.
 
-TODO img
+![Histogram](images/histogram.png?raw=true)
 
 ## <kbd>r</kbd>: Restart Trace
 
