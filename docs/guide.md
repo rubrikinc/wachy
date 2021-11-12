@@ -26,7 +26,7 @@ implemented yet. If you run into any problems please open an issue.
 To run wachy, simply pass it the binary and [function](#function-matching)
 within it that you would like to trace.
 ```
-# wachy ./program foo
+sudo wachy ./program foo
 ```
 If there are multiple matches for the function it will ask you to select one,
 otherwise it will drop into source view.
@@ -182,7 +182,7 @@ will be output to the file `wachy.log`. See [log
 spec](https://docs.rs/flexi_logger/0.14.3/flexi_logger/struct.LogSpecification.html)
 for more details on the format.
 ```
-# WACHY_LOG=wachy=info wachy ./program "foo()"
+sudo WACHY_LOG=wachy=info wachy ./program "foo()"
 ```
 
 [^1]: Technically wachy could figure it out at runtime with eBPF but this is not
