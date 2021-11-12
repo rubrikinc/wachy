@@ -280,13 +280,17 @@ impl TraceStack {
         guard.tx.send(Event::TraceCommandModified).unwrap();
     }
 
+    fn command_modified(&self, guard: MutexGuard<Frames>) {
+        self.counter.fetch_add(1, Ordering::Release);
+        guard.tx.send(Event::TraceCommandModified).unwrap();
+    }
+
     /// Remove traced callsite, returning true if one exists corresponding to this line.
     pub fn remove_callsite(&self, line: u32) -> bool {
         let mut guard = self.stack.lock().unwrap();
         let top_frame = guard.frames.last_mut().unwrap();
         if top_frame.traced_callsites.remove(&line).is_some() {
-            self.counter.fetch_add(1, Ordering::Release);
-            guard.tx.send(Event::TraceCommandModified).unwrap();
+            self.command_modified(guard);
             true
         } else {
             false
@@ -297,8 +301,7 @@ impl TraceStack {
         let mut guard = self.stack.lock().unwrap();
         // TODO prevent recursive (or do we need to?)
         guard.frames.push(frame);
-        self.counter.fetch_add(1, Ordering::Release);
-        guard.tx.send(Event::TraceCommandModified).unwrap();
+        self.command_modified(guard);
     }
 
     /// Pops the current frame, if it is not the last one. Returns the new top
@@ -311,16 +314,14 @@ impl TraceStack {
         }
         guard.frames.pop();
         let frame = (*guard.frames.last().unwrap()).clone();
-        self.counter.fetch_add(1, Ordering::Release);
-        guard.tx.send(Event::TraceCommandModified).unwrap();
+        self.command_modified(guard);
         Some(frame)
     }
 
     pub fn set_mode(&self, mode: TraceMode) {
         let mut guard = self.stack.lock().unwrap();
         guard.mode = mode;
-        self.counter.fetch_add(1, Ordering::Release);
-        guard.tx.send(Event::TraceCommandModified).unwrap();
+        self.command_modified(guard);
     }
 
     pub fn get_current_filter(&self, is_ret_filter: bool) -> Option<String> {
@@ -346,6 +347,7 @@ impl TraceStack {
         };
         if filter.is_empty() {
             *frame_filter = None;
+            self.command_modified(guard);
             return Ok(());
         }
 
@@ -368,8 +370,7 @@ impl TraceStack {
             }
             Err(String::from_utf8(output.stderr).unwrap().into())
         } else {
-            self.counter.fetch_add(1, Ordering::Release);
-            guard.tx.send(Event::TraceCommandModified).unwrap();
+            self.command_modified(guard);
             Ok(())
         }
     }
