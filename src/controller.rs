@@ -11,7 +11,7 @@ use crate::views;
 use crate::views::TraceState;
 use cursive::traits::{Nameable, Resizable};
 use cursive::views::{Dialog, LinearLayout};
-use cursive::Cursive;
+use cursive::{Cursive, CursiveRunnable, CursiveRunner};
 use program::SymbolInfo;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ impl Controller {
         Tracer::run_prechecks()?;
 
         let (tx, rx) = mpsc::channel();
-        let mut siv = cursive::default();
+        let mut siv = cursive::default().into_runner();
         let function = Controller::get_initial_function(
             search,
             &mut siv,
@@ -98,7 +98,7 @@ impl Controller {
 
     fn get_initial_function(
         search: &str,
-        siv: &mut Cursive,
+        siv: &mut CursiveRunner<CursiveRunnable>,
         searcher: Searcher,
         tx: mpsc::Sender<Event>,
         rx: &mpsc::Receiver<Event>,
@@ -157,7 +157,9 @@ impl Controller {
                                 return Ok(Some(symbol.name));
                             };
                         }
-                        views::update_search_view(siv, &view_name, results);
+                        if views::update_search_view(siv, &view_name, results) {
+                            siv.refresh();
+                        }
                     }
                     Event::SelectedFunction(function) => {
                         siv.pop_layer();
@@ -187,7 +189,7 @@ impl Controller {
         Ok(None)
     }
 
-    fn handle_event(siv: &mut Cursive, event: Event) -> Result<(), Error> {
+    fn handle_event(siv: &mut CursiveRunner<CursiveRunnable>, event: Event) -> Result<(), Error> {
         match event {
             Event::FatalTraceError { error_message } => {
                 siv.quit();

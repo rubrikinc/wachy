@@ -191,7 +191,7 @@ impl Program {
             Ok(file) => file,
             Err(err) => return Err(format!("Failed to open file {}: {}", file_path, err).into()),
         };
-        let mmap = match unsafe { memmap::Mmap::map(&file) } {
+        let mmap = match unsafe { memmap2::Mmap::map(&file) } {
             Ok(mmap) => mmap,
             Err(err) => return Err(format!("Failed to mmap file {}: {}", file_path, err).into()),
         };
@@ -201,7 +201,7 @@ impl Program {
         // LOTS of annotations.
         let mmap = Box::leak(Box::new(mmap));
 
-        match object::File::parse(&*mmap) {
+        match object::File::parse(&**mmap) {
             Ok(file) => Ok(file),
             Err(err) => return Err(format!("Failed to parse file {}: {}", file_path, err).into()),
         }
@@ -473,16 +473,8 @@ impl Iterator for CallIterator<'_, '_> {
     }
 }
 
-/// Clone of addr2line::ObjectContext::new, just using Arc instead of Rc.
-///
-/// Construct a new `Context`.
-///
-/// The resulting `Context` uses `gimli::EndianRcSlice<gimli::RunTimeEndian>`.
-/// This means it is not thread safe, has no lifetime constraints (since it copies
-/// the input data), and works for any endianity.
-///
-/// Performance sensitive applications may want to use `Context::from_sections`
-/// with a more specialised `gimli::Reader` implementation.
+/// Clone (plus inlining) of addr2line::ObjectContext::new, just using Arc
+/// instead of Rc.
 pub fn new_context<'data: 'file, 'file, O: object::Object<'data, 'file>>(
     file: &'file O,
 ) -> Result<addr2line::Context<gimli::EndianArcSlice<gimli::RunTimeEndian>>, gimli::Error> {
@@ -492,40 +484,22 @@ pub fn new_context<'data: 'file, 'file, O: object::Object<'data, 'file>>(
         gimli::RunTimeEndian::Big
     };
 
-    fn load_section<'data: 'file, 'file, O, S, Endian>(file: &'file O, endian: Endian) -> S
+    fn load_section<'data: 'file, 'file, O, Endian>(
+        id: gimli::SectionId,
+        file: &'file O,
+        endian: Endian,
+    ) -> Result<gimli::EndianArcSlice<Endian>, gimli::Error>
     where
         O: object::Object<'data, 'file>,
-        S: gimli::Section<gimli::EndianArcSlice<Endian>>,
         Endian: gimli::Endianity,
     {
         let data = file
-            .section_by_name(S::section_name())
+            .section_by_name(id.name())
             .and_then(|section| section.uncompressed_data().ok())
             .unwrap_or(Cow::Borrowed(&[]));
-        S::from(gimli::EndianArcSlice::new(Arc::from(&*data), endian))
+        Ok(gimli::EndianArcSlice::new(Arc::from(&*data), endian))
     }
 
-    let debug_abbrev: gimli::DebugAbbrev<_> = load_section(file, endian);
-    let debug_addr: gimli::DebugAddr<_> = load_section(file, endian);
-    let debug_info: gimli::DebugInfo<_> = load_section(file, endian);
-    let debug_line: gimli::DebugLine<_> = load_section(file, endian);
-    let debug_line_str: gimli::DebugLineStr<_> = load_section(file, endian);
-    let debug_ranges: gimli::DebugRanges<_> = load_section(file, endian);
-    let debug_rnglists: gimli::DebugRngLists<_> = load_section(file, endian);
-    let debug_str: gimli::DebugStr<_> = load_section(file, endian);
-    let debug_str_offsets: gimli::DebugStrOffsets<_> = load_section(file, endian);
-    let default_section = gimli::EndianArcSlice::new(Arc::from(&[][..]), endian);
-
-    addr2line::Context::from_sections(
-        debug_abbrev,
-        debug_addr,
-        debug_info,
-        debug_line,
-        debug_line_str,
-        debug_ranges,
-        debug_rnglists,
-        debug_str,
-        debug_str_offsets,
-        default_section,
-    )
+    let dwarf = gimli::Dwarf::load(|id| load_section(id, file, endian))?;
+    addr2line::Context::from_dwarf(dwarf)
 }

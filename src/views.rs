@@ -279,11 +279,13 @@ where
         .fixed_width(SEARCH_VIEW_WIDTH)
 }
 
+/// Update search view, return true if it was found (and updated)
 pub fn update_search_view<T>(
     siv: &mut Cursive,
     search_view_name: &str,
     results: Vec<(String, Option<T>)>,
-) where
+) -> bool
+where
     T: 'static,
 {
     let found_opt = siv
@@ -294,9 +296,7 @@ pub fn update_search_view<T>(
                 select_view.add_item(label, value);
             }
         });
-    found_opt.map(|_| {
-        siv.refresh();
-    });
+    return found_opt.is_some();
 }
 
 /// Convenience wrapper for new_search_view with results searched using search::rank_fn
