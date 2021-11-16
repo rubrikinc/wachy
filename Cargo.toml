@@ -3,6 +3,8 @@ name = "wachy"
 version = "0.1.0-alpha.4"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [dependencies]
 addr2line = { path = "../addr2line" }
