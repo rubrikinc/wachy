@@ -505,11 +505,11 @@ impl TraceStack {
                     ));
                     // Ensure the tracepoint at the end of the call is only
                     // triggered if we traced the start.
-                    let call_done_filter = depth_condition(frame_depth + 1)
+                    let call_done_condition = depth_condition(frame_depth + 1)
                         .map(|c| c + &format!(" && @start{}[tid]", line));
                     program.add(Block::new(
                         UprobeOffset(function, callsite.relative_ip + callsite.length as u32),
-                        call_done_filter,
+                        call_done_condition,
                         vec![
                             format!(
                                 "@duration_tmp{line}[tid] += nsecs - @start{line}[tid]",
@@ -579,6 +579,12 @@ impl TraceStack {
                 ));
             }
             TraceMode::Breakdown => {
+                // Need `+=` here for most variables rather than `=` because we
+                // only "commit" the values after returning from the topmost
+                // frame (we need to ensure ret filters are satisfied). During
+                // that time we may reach other intermediate/nested frames
+                // multiple times but still have to accumulate time for all of
+                // them.
                 program.add(Block::new(
                     Uretprobe(function),
                     depth_condition(frame_depth + 1),
@@ -600,9 +606,17 @@ impl TraceStack {
                         depth_condition(frame_depth + 1),
                         vec![format!("@start_breakdown{}[tid] = nsecs", i)],
                     ));
+                    // If a function is called recursively, `@start_breakdown`
+                    // var will have been cleared after first (most nested)
+                    // retprobe. Ensure we only accumulate if `@start_breakdown`
+                    // is set - this will result in inaccurate traces but at
+                    // least prevent underflow.
+                    // TODO properly handle recursive calls
+                    let ret_condition = depth_condition(frame_depth + 1)
+                        .map(|c| c + &format!(" && @start_breakdown{}[tid]", i));
                     program.add(Block::new(
                         Uretprobe(function),
-                        depth_condition(frame_depth + 1),
+                        ret_condition,
                         vec![
                             format!(
                                 "@duration_breakdown_tmp{i}[tid] += nsecs - @start_breakdown{i}[tid]",
@@ -696,7 +710,7 @@ impl TraceStack {
                     // We may not have actually reached the place where
                     // `@duration_tmp` is set, so check that it is non-zero.
                     // TODO are we guaranteed duration will be non-zero when
-                    // actually hit?
+                    // actually hit or would this end up dropping 0ns calls?
                     condition: format!(
                         "@matched_retfilters[tid] == {} && @duration_tmp[tid]",
                         num_retfilters
@@ -710,10 +724,6 @@ impl TraceStack {
             }
             TraceMode::Breakdown => {
                 last_retprobe.add(Expression::If {
-                    // We may not have actually reached the place where
-                    // `@duration_tmp` is set, so check that it is non-zero.
-                    // TODO are we guaranteed duration will be non-zero when
-                    // actually hit?
                     condition: format!(
                         "@matched_retfilters[tid] == {}",
                         num_retfilters

@@ -1,10 +1,11 @@
 [package]
 name = "wachy"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 authors = ["Vivek Jain <vivek.jain@rubrik.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+description = "A dynamic tracing profiler for Linux"
 
 [dependencies]
 addr2line = "0.17.0"

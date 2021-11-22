@@ -55,6 +55,13 @@ the average duration/latency of the function as well as frequency with which
 it's called.
 
 <details>
+<summary>Caveats</summary>
+
+For functions that are called recursively (directly or indirectly), the way
+wachy currently traces them will likely result in inaccurate numbers.
+</details>
+
+<details>
 <summary>Remote debugging</summary>
 If the source file is not available, wachy displays blank lines for the line
 numbers that it knows about. This can be handy for remote debugging on a
@@ -159,7 +166,6 @@ pushed onto the stack.
 
 <details>
 <summary>Caveats</summary>
-
 The way this works is wachy maintains a counter of the number of exit filters
 that have passed. For performance reasons, only on return of the topmost
 function, it checks whether the counter is at the expected value, and if so the

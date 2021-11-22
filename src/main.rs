@@ -18,7 +18,8 @@ use std::sync::Mutex;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-const ABOUT: &'static str = r#"A dynamic tracing profiler for arbitrary binaries using eBPF.
+const ABOUT: &'static str = r#"A dynamic tracing profiler for Linux.
+Uses eBPF to trace arbitrary binaries and compiled functions at runtime.
 
 Keyboard shortcuts:
 x - toggle tracing on current line
