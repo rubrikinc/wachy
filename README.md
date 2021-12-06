@@ -42,10 +42,10 @@ Download the latest version from the [Releases page](TODO).
 
 Wachy relies on
 [bpftrace](https://github.com/iovisor/bpftrace/blob/master/INSTALL.md) and the
-following shared libraries to run: libncursesw, libtinfo, libgcc_s. On ubuntu
-some of these may be installed by default, but to install them all you can run
+following shared libraries to run: libgcc_s, libncursesw. On ubuntu some of
+these may be installed by default, but to install them all you can run
 ```
-sudo apt install bpftrace libncursesw5 libtinfo5 libgcc1
+sudo apt install bpftrace libgcc1 libncursesw5
 ```
 
 If you see strange characters in the TUI, ensure your `LANG` is set correctly,

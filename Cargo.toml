@@ -32,3 +32,6 @@ zydis = "3.1.2"
 [profile.release]
 # Helps reduce binary size
 lto = true
+
+[package.metadata.deb]
+depends = "$auto, bpftrace, libgcc1"
