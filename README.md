@@ -17,7 +17,7 @@
 
 The best way to understand wachy is to watch this 3 minute demo:
 
-[![Demo video](https://img.youtube.com/vi/L6VyQP-YDgE/0.jpg)](https://www.youtube.com/watch?v=L6VyQP-YDgE "wachy demo")
+[![Demo video](docs/images/video.png)](https://www.youtube.com/watch?v=L6VyQP-YDgE "Demo video")
 
 For more details see the [guide](docs/guide.md).
 
@@ -27,18 +27,22 @@ Wachy requires:
 1. Linux 4.6 or later kernel
 2. Traced binary should be in a compiled language
 
-1 is due to availability of certain eBPF features, and 2 due to the techniques
-used by wachy (eBPF uprobes and debugging symbols). Wachy also supports C++
-symbol demangling (it has mostly been tested with C++ binaries). If you'd like
-demangling support for a new compiled language, please open an issue (note:
-despite being compiled, [Go does not play well with
+1 is due to availability of certain eBPF features, and 2 is due to the
+techniques used by wachy (eBPF uprobes and ELF debugging symbols). Wachy also
+supports C++ symbol demangling - it has mostly been tested with C++ binaries. If
+you'd like demangling support for a new compiled language, please open an issue
+(note: despite being compiled, [Go does not play well with
 eBPF](https://medium.com/bumble-tech/bpf-and-go-modern-forms-of-introspection-in-linux-6b9802682223#db17)).
 If you have ideas on how to do something similar on other platforms or with
 other unsupported languages, I'm interested in hearing it!
 
+Wachy also currently only supports x86-64 binaries. If you are interested in
+other architectures, please open an issue.
+
 ## Install
 
-Download the latest version from the [Releases page](TODO).
+Download the latest version from the [Releases
+page](https://github.com/rubrikinc/wachy/releases).
 
 Wachy relies on
 [bpftrace](https://github.com/iovisor/bpftrace/blob/master/INSTALL.md) and the
@@ -69,18 +73,12 @@ cargo build --release
 target/release/wachy --help
 ```
 
-## License
+## Contribution
 
-Licensed under either of
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as per [LICENSE.md](LICENSE.md), without any additional terms or
+conditions.
 
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in the work by you, as defined in the Apache-2.0
-license, shall be dual licensed as above, without any additional terms
-or conditions.
+Contributions to this project must be accompanied by a Contributor License
+Agreement. We use https://cla-assistant.io to automate this process.

@@ -43,6 +43,11 @@ The program must have debugging symbols (more specifically, the `.debug_line`
 section) for wachy to do its magic. Wachy also supports [debug
 links](https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html) -
 simply place the separate debug file in the current working directory.
+
+The source files should be placed in the same path that they were compiled (the
+expected path is displayed at the bottom of the window). If wachy cannot find
+this file, it displays blank lines instead (see section below on Remote
+debugging).
 </details>
 
 ## Source View
