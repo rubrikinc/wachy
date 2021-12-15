@@ -326,6 +326,7 @@ impl Program {
                         }
                         Err(err) => return Some(Err(err)),
                     }
+                    // TODO should we be checking BuildID too?
                     filename
                 }
                 None => return None,

@@ -8,16 +8,7 @@
 
 <br>
 
- - Uses eBPF to trace arbitrary binaries and compiled functions at runtime with
-   0 modifications
- - Understands your source code to make setting up traces much faster and easier
- - View actual time spent in functions, including common blocking calls like
-   mutex/IO/network
- - Add tracing filters at runtime
-
-The best way to understand wachy is to watch this 3 minute demo:
-
-[![Demo video](docs/images/video.png)](https://www.youtube.com/watch?v=L6VyQP-YDgE "Demo video")
+For an overview, see the website: https://rubrikinc.github.io/wachy/
 
 For more details see the [guide](docs/guide.md).
 
@@ -25,13 +16,14 @@ For more details see the [guide](docs/guide.md).
 
 Wachy requires:
 1. Linux 4.6 or later kernel
-2. Traced binary should be in a compiled language
+2. Traced binary should be in a compiled language, and have debugging symbols
 
 1 is due to availability of certain eBPF features, and 2 is due to the
-techniques used by wachy (eBPF uprobes and ELF debugging symbols). Wachy also
-supports C++ symbol demangling - it has mostly been tested with C++ binaries. If
-you'd like demangling support for a new compiled language, please open an issue
-(note: despite being compiled, [Go does not play well with
+techniques used by wachy (eBPF uprobes and address to line number mappings from
+debugging symbols). Wachy also supports C++ symbol demangling - it has mostly
+been tested with C++ binaries. If you'd like demangling support for a new
+compiled language, please open an issue (note: despite being compiled, [Go does
+not play well with
 eBPF](https://medium.com/bumble-tech/bpf-and-go-modern-forms-of-introspection-in-linux-6b9802682223#db17)).
 If you have ideas on how to do something similar on other platforms or with
 other unsupported languages, I'm interested in hearing it!
