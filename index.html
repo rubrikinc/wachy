@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+  <title>wachy - A New Approach to Performance Debugging</title>
+  <meta name="author" content="Vivek Jain" />
+  <link rel="icon" type="image/png" href="logo.png">
+  <link href="tailwind.css" rel="stylesheet">
+
+  <style>
+    @import url("https://rsms.me/inter/inter.css");
+
+    html {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+        "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+        "Noto Color Emoji";
+      color: white;
+    }
+
+    .gradient {
+      background-image: linear-gradient(-225deg, #1c1c1c 0%, #333333 100%);
+    }
+
+    .gradient2 {
+      background-image: linear-gradient(90deg, #175A00 0%, #38CD03 100%);
+    }
+
+    .text-green-1 {
+      color: #38CD03;
+    }
+
+    .text-green-2 {
+      color: #299F00;
+    }
+
+    .text-green-3 {
+      color: #1F7900;
+    }
+
+    .text-green-4 {
+      color: #175A00;
+    }
+
+    .bg-green-gradient {
+      background-image: linear-gradient(-225deg, #040d00 0%, #0b2600 100%);
+    }
+
+    a {
+      color: #299F00;
+    }
+
+    a:hover {
+      color: #38CD03;
+    }
+
+    .button {
+      border-radius: 50px;
+      transition: all 0.3s;
+      background-color: #1F7900;
+    }
+
+    .button:hover {
+      border-radius: 2px;
+      background-color: #38CD03;
+      box-shadow: 1px 2px 3px rgba(255, 255, 255, 0.5);
+      color: rgb(31, 41, 55);
+    }
+
+    .shadow-inner {
+      --tw-shadow: inset 0 0 4px 0 rgba(0, 0, 0, 0.6);
+    }
+
+    /* https://stackoverflow.com/a/17465040 */
+    .yt-container>div {
+      position: relative;
+      width: calc(100% - 3rem);
+      padding-bottom: 62%;
+      height: 0px;
+    }
+
+    .yt-container iframe {
+      position: absolute;
+      top: 0px;
+      left: 0px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .footer img {
+      position: relative;
+      top: -2px;
+      filter: brightness(0) invert(1);
+    }
+
+    .footer:hover .heart {
+      font-size: 1.5rem;
+      color: red;
+    }
+
+    .footer:hover img {
+      width: 1.5rem;
+      top: -4px;
+      filter: none;
+    }
+
+    .break {
+      width: 100%;
+      height: 0;
+    }
+  </style>
+</head>
+
+<body class="leading-relaxed tracking-wide flex flex-col">
+  <div class="gradient">
+    <div class="container mx-auto">
+      <div class="pt-24 px-3 lg:px-0">
+        <div class="flex items-center justify-center">
+          <img src="logo.png" alt="Logo" class="w-36">
+          <div class="ml-8">
+            <h1 class="text-2xl md:text-3xl lg:text-5xl font-black leading-tight">
+              wachy
+            </h1>
+            <h1 class="my-4 text-xl md:text-2xl lg:text-3xl font-black leading-tight">
+              A New Approach to Performance Debugging
+            </h1>
+          </div>
+        </div>
+        <p class="my-16 text-center leading-normal text-gray-200 text-base md:text-xl lg:text-2xl mb-8">
+          Trace arbitrary compiled binaries and functions on Linux, at runtime with 0 modifications.
+        </p>
+      </div>
+
+      <div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-4">
+          <div class="mt-10">
+            <dl class="space-y-10 md:space-y-0 md:grid md:grid-cols-2 md:gap-x-8 md:gap-y-10">
+              <div class="relative">
+                <dt>
+                  <div class="absolute flex items-center justify-center h-12 w-12 rounded-md bg-black text-white">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24">
+                      <path fill="currentColor"
+                        d="M11 9.47V11H14.76L13 14.53V13H9.24L11 9.47M13 1L6 15H11V23L18 9H13V1Z" />
+                    </svg>
+                  </div>
+                  <p class="ml-16 text-lg leading-6 font-medium text-gray-100">Low overhead dynamic instrumentation</p>
+                </dt>
+                <dd class="mt-2 ml-16 text-base text-gray-400">
+                  Wachy uses the magic of eBPF to dynamically instrument binaries with minimal overhead. This also means
+                  there is 0 overhead for untraced functions.
+                </dd>
+              </div>
+
+              <div class="relative">
+                <dt>
+                  <div class="absolute flex items-center justify-center h-12 w-12 rounded-md bg-black text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      xmlns="http://www.w3.org/2000/svg">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                    </svg>
+                  </div>
+                  <p class="ml-16 text-lg leading-6 font-medium text-gray-100">Deep code integration</p>
+                </dt>
+                <dd class="mt-2 ml-16 text-base text-gray-400">
+                  eBPF on its own can be difficult and time-consuming to use. The goal of wachy is to make userspace
+                  eBPF tracing 10-100x faster and easier by connecting it back to your source code.
+                </dd>
+              </div>
+
+              <div class="relative">
+                <dt>
+                  <div class="absolute flex items-center justify-center h-12 w-12 rounded-md bg-black text-white">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24">
+                      <path fill="currentColor"
+                        d="M12,20A7,7 0 0,1 5,13A7,7 0 0,1 12,6A7,7 0 0,1 19,13A7,7 0 0,1 12,20M19.03,7.39L20.45,5.97C20,5.46 19.55,5 19.04,4.56L17.62,6C16.07,4.74 14.12,4 12,4A9,9 0 0,0 3,13A9,9 0 0,0 12,22C17,22 21,17.97 21,13C21,10.88 20.26,8.93 19.03,7.39M11,14H13V8H11M15,1H9V3H15V1Z" />
+                    </svg>
+                  </div>
+                  <p class="ml-16 text-lg leading-6 font-medium text-gray-100">Understand real latencies</p>
+                </dt>
+                <dd class="mt-2 ml-16 text-base text-gray-400">
+                  Stack sampling profilers only provide part of the picture as they usually show the proportion of
+                  active CPU cycles.
+                  With wachy, you get accurate function latencies including time spent in common blocking calls like
+                  waiting on network, IO or mutexes.
+                  It can also gather latency histograms.
+                </dd>
+              </div>
+
+              <div class="relative">
+                <dt>
+                  <div class="absolute flex items-center justify-center h-12 w-12 rounded-md bg-black text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      xmlns="http://www.w3.org/2000/svg">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z">
+                      </path>
+                    </svg>
+                  </div>
+                  <p class="ml-16 text-lg leading-6 font-medium text-gray-100">Powerful runtime filtering</p>
+                </dt>
+                <dd class="mt-2 ml-16 text-base text-gray-400">
+                  Add filters for conditions you want to trace. At runtime with no code changes. eBPF truly is magic.
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="w-full my-10 md:my-16 px-2 py-2">
+        <ul class="flex flex-wrap justify-center items-center text-center">
+          <li class="mx-8 my-2">
+            <a href="https://github.com/rubrikinc/wachy#install" class="button text-white font-extrabold py-4 px-8">
+              Install
+            </a>
+          </li>
+          <div class="break sm:hidden"></div>
+
+          <li class="mx-8 my-2 pt-3 sm:pt-0">
+            <a class="inline-block font-extrabold py-4"
+              href="https://github.com/rubrikinc/wachy/blob/master/docs/guide.md">Read Guide</a>
+          </li>
+          <div class="break sm:hidden"></div>
+
+          <li class="mx-8 my-2">
+            <a href="https://github.com/rubrikinc/wachy" class="font-extrabold py-4">
+              <svg class="inline-block relative -top-1" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+              </svg>
+              &nbsp; GitHub
+            </a>
+          </li>
+      </div>
+    </div>
+  </div>
+
+  <section class="bg-green-gradient pt-8 shadow-inner">
+    <p class="text-lg text-center">Watch a 3 minute demo of wachy:</p>
+    <p class="text-sm text-gray-400 text-center">This is the best way to understand wachy. But if you prefer reading,
+      look at the <a href="https://github.com/rubrikinc/wachy/blob/master/docs/guide.md">guide</a>.</p>
+    <div class="mt-2 flex items-center w-full mx-auto yt-container max-w-screen-xl">
+      <div class="flex flex-1 m-6 mt-0">
+        <iframe src="https://www.youtube-nocookie.com/embed/L6VyQP-YDgE" title="YouTube video player" frameborder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen></iframe>
+      </div>
+    </div>
+  </section>
+
+  <section class="gradient py-8 shadow-inner">
+    <div class="container mx-auto m-8">
+      <h2 class="w-full my-2 text-5xl font-black leading-tight text-center">
+        What is it good for?
+      </h2>
+      <div class="w-full mb-4">
+        <div class="h-1 mx-auto gradient2 w-64 opacity-75 my-0 py-0"></div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-4">
+        <div class="mt-10">
+          <dl class="space-y-10 md:space-y-0 md:grid md:grid-cols-2 md:gap-x-8 md:gap-y-10">
+            <div class="relative">
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-green-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Frequently executed functions</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  The wachy interface displays average latency of each tracepoint, or the latency histogram of a
+                  function.
+                  If you have something like an RPC or web server with frequent requests, this works great for
+                  understanding latency, down to the level of individual functions.
+                </dd>
+              </div>
+
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-green-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Interactive debugging with filtering</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  Wachy maintains a stack of functions being traced, which lends itself well to iterative exploration of
+                  nested functions.
+                  You can also specify custom filters.
+                  Want to only see the latency of function B called from function A where A's first argument is 0? No
+                  problem.
+                </dd>
+              </div>
+
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-green-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Understanding tail latencies</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  Wachy allows specifying runtime filters to understand program behavior under various conditions.
+                  For example, where is the time spent inside a function when it takes longer than 100ms to execute?
+                </dd>
+              </div>
+
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-green-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Debugging in production</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  There's often some performance issue which only occurs in production.
+                  And yeah, sure you follow all the best practices but sometimes the best way to debug it is just to get
+                  in there and examine at what's happening live.
+                  eBPF guarantees that any tracing you do is completely safe (I'm looking at you, gdb) with the only
+                  side effect being minor tracing overhead.
+                  Wachy's TUI is designed with this use case in mind – there's no need to forward ports, all you need is
+                  an SSH connection to the machine you want to debug on.
+                </dd>
+              </div>
+            </div>
+
+            <div class="relative">
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-red-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Debugging on arbitrary platforms</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  Necessary eBPF features are only available on Linux 4.6 or later kernels.
+                </dd>
+              </div>
+
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-red-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Debugging arbitrary languages</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  Wachy relies on eBPF uprobes and debugging symbols, which only work for compiled languages.
+                  C++ symbol demangling for displaying human-readable function names is also supported.
+                </dd>
+              </div>
+
+              <div class="my-3">
+                <dt>
+                  <div class="absolute flex items-center justify-center text-red-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <p class="ml-12 text-lg leading-6 font-medium text-gray-100">Debugging extremely latency-sensitive
+                    code</p>
+                </dt>
+                <dd class="ml-12 mt-2 text-base text-gray-400">
+                  While eBPF overhead is fairly low, there is some overhead – in my measurements, about 3μs per traced
+                  function call.
+                  For functions that take less time than that and are frequently called, this may be unacceptable and
+                  wachy's precision will not be good enough.
+                </dd>
+              </div>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="text-center bg-black p-2 footer">
+    <p class="leading-10">
+      Built with <span class="heart transition-all">&hearts;</span> by <a href="https://www.vivekja.in/"><img
+          src="https://www.vivekja.in/icons/favicon-inverse.png" alt="Vivek Jain" class="transition-all inline w-4"></a>
+      at <a href="https://www.rubrik.com/"><img
+          src="https://www.rubrik.com/etc.clientlibs/rubrik/clientlibs/clientlib-base/resources/images/favicon/favicon-32x32.png"
+          alt="Rubrik" class="transition-all inline w-4"></a>
+    </p>
+  </section>
+</body>
+
+</html>
