@@ -8,7 +8,8 @@
 
 <br>
 
-For an overview, see the website: https://rubrikinc.github.io/wachy/
+For an overview, see the website: https://rubrikinc.github.io/wachy/.
+For background see the introductory [blog post](https://www.rubrik.com/blog/technology/22/1/introducing-wachy-a-new-approach-to-performance-debugging).
 
 For more details see the [guide](docs/guide.md).
 
