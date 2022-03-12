@@ -937,6 +937,30 @@ impl Controller {
             );
             siv.add_layer(search_view);
         });
+
+        KeyHandler::add_global_callback(siv, 'm', |siv| {
+            let controller = siv.user_data::<Controller>().unwrap();
+            let initial_results = vec![("Type to search".to_string(), None)];
+            controller
+                .searcher
+                .setup_search(initial_results.clone(), Vec::new());
+            let search_view = views::new_search_view(
+                "Select a function to get its mangled name",
+                initial_results,
+                move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
+                    let controller = siv.user_data::<Controller>().unwrap();
+                    controller.searcher.search(view_name, search, n_results);
+                },
+                move |siv: &mut Cursive, symbol: &SymbolInfo| {
+                    // TODO cancel any pending searches
+                    siv.add_layer(views::new_dialog(&format!(
+                        "Mangled version of {} is:\n{:?}",
+                        symbol.name, symbol.name
+                    )));
+                },
+            );
+            siv.add_layer(search_view);
+        });
     }
 }
 

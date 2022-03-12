@@ -180,6 +180,12 @@ simple way to avoid those issues is to only ever define an exit filter on the
 topmost function in the stack.
 </details>
 
+## <kbd>m</kbd>: Get Mangled Function Name
+
+Use wachy's fuzzy search to find the mangled version of a function name. This is
+mostly useful when I want to do analysis of a function outside of wachy, but
+wachy's search is one of the fastest ways to find the full function name.
+
 # Misc
 
 ## Function matching

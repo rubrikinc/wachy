@@ -32,6 +32,7 @@ h - get histogram of current function's latency
 f - add filter on function entry
 g - add filter on function exit. `$duration` can be used to refer to
     function latency.
+m - get mangled function name
 "#;
 
 lazy_static::lazy_static! {
