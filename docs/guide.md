@@ -7,16 +7,16 @@ implemented yet. If you run into any problems please open an issue.
 - [Starting wachy](#starting-wachy)
   - [Source View](#source-view)
 - [Features/Keyboard Shortcuts](#featureskeyboard-shortcuts)
-  - [<kbd>x</kbd>: Trace Line](#kbdxkbd-trace-line)
-  - [<kbd>X</kbd>: Trace Inlined Function](#kbdxkbd-trace-inlined-function)
-  - [<kbd>Enter</kbd>: Push Line Onto Stack](#kbdenterkbd-push-line-onto-stack)
+  - [<kbd>x</kbd>: Trace Line](#x-trace-line)
+  - [<kbd>X</kbd>: Trace Inlined Function](#x-trace-inlined-function)
+  - [<kbd>Enter</kbd>: Push Line Onto Stack](#enter-push-line-onto-stack)
     - [Trace Stack](#trace-stack)
-  - [<kbd>></kbd>: Specify Function to Push Onto Stack](#kbdkbd-specify-function-to-push-onto-stack)
-  - [<kbd>Esc</kbd>: Pop Function From Stack](#kbdesckbd-pop-function-from-stack)
-  - [<kbd>h</kbd>: Histogram](#kbdhkbd-histogram)
-  - [<kbd>r</kbd>: Restart Trace](#kbdrkbd-restart-trace)
-  - [<kbd>f</kbd>: Filter Function Entry](#kbdfkbd-filter-function-entry)
-  - [<kbd>g</kbd>: Filter Function Exit](#kbdgkbd-filter-function-exit)
+  - [<kbd>></kbd>: Specify Function to Push Onto Stack](#-specify-function-to-push-onto-stack)
+  - [<kbd>Esc</kbd>: Pop Function From Stack](#esc-pop-function-from-stack)
+  - [<kbd>h</kbd>: Histogram](#h-histogram)
+  - [<kbd>r</kbd>: Restart Trace](#r-restart-trace)
+  - [<kbd>f</kbd>: Filter Function Entry](#f-filter-function-entry)
+  - [<kbd>g</kbd>: Filter Function Exit](#g-filter-function-exit)
 - [Misc](#misc)
   - [Function matching](#function-matching)
   - [Logging](#logging)
@@ -33,7 +33,7 @@ otherwise it will drop into source view.
 
 Wachy will trace the function across all running instances of the binary - this
 is how eBPF works. You can add a `pid`-based
-[filter](#kbdfkbd-filter-function-entry) if you need to limit to a single
+[filter](#f-filter-function-entry) if you need to limit to a single
 process.
 
 <details>
@@ -111,11 +111,11 @@ There are 3 types of function calls:
 1. Indirect/Register call - a function that can change at runtime. This is used
    for e.g. calling function pointers or C++ virtual function calls. Wachy does
    not know which function this corresponds to[^1] so it will ask you to specify
-   the function (same as [`>`](#kbdkbd-specify-function-to-push-onto-stack)).
+   the function (same as [`>`](#-specify-function-to-push-onto-stack)).
 2. Direct call - a specific address/function in the program. Wachy can
    automatically find the corresponding function.
 3. Dynamic call - a function in a dynamically linked library. Wachy currently
-   supports [tracing](#kbdxkbd-trace-line) such calls but not pushing them onto
+   supports [tracing](#x-trace-line) such calls but not pushing them onto
    the stack.
 
 ### Trace Stack
@@ -125,7 +125,7 @@ then add `bar()` to the trace stack, it will only show calls to `bar()` that
 happen while inside `foo()`. However, it does not need to be the immediate
 parent function, it just has to be somewhere in the call stack - this allows you
 to trace a deeply nested function with
-[`>`](#kbdkbd-specify-function-to-push-onto-stack) when desired.
+[`>`](#-specify-function-to-push-onto-stack) when desired.
 
 ## <kbd>></kbd>: Specify Function to Push Onto Stack
 
