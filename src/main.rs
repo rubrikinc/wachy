@@ -1,4 +1,5 @@
 mod bpftrace_compiler;
+mod constants;
 mod controller;
 mod error;
 mod events;

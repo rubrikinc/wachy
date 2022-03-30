@@ -3,6 +3,7 @@ use itertools::Itertools;
 use crate::bpftrace_compiler::BlockType::{Uprobe, UprobeOffset, Uretprobe};
 use crate::bpftrace_compiler::Expression::Printf;
 use crate::bpftrace_compiler::{self, Block, BlockType, Expression};
+use crate::constants::BPFTRACE_PATH;
 use crate::error::Error;
 use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
@@ -354,7 +355,7 @@ impl TraceStack {
         let prev_filter = frame_filter.clone();
         *frame_filter = Some(filter);
         // Run bpftrace in dry run mode to ensure filter compiles
-        let output = std::process::Command::new("bpftrace")
+        let output = std::process::Command::new(BPFTRACE_PATH)
             .args(&["-d", "-e", &self.get_bpftrace_expr_locked(&guard).0])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -486,7 +487,7 @@ impl TraceStack {
                         true,
                         vec![
                             format!(
-                                "@duration_tmp{line}[tid] += nsecs - @start{line}[tid]",
+                                "@duration_tmp{line}[tid] += (nsecs - @start{line}[tid])",
                                 line = line
                             ),
                             format!("$duration = @duration_tmp{}[tid]", line),
@@ -512,7 +513,7 @@ impl TraceStack {
                         call_done_condition,
                         vec![
                             format!(
-                                "@duration_tmp{line}[tid] += nsecs - @start{line}[tid]",
+                                "@duration_tmp{line}[tid] += (nsecs - @start{line}[tid])",
                                 line = line
                             ),
                             format!("@count_tmp{}[tid] += 1", line),
@@ -592,7 +593,7 @@ impl TraceStack {
                         &last_frame.ret_filter,
                         true,
                         vec![
-                            format!("@duration_tmp[tid] += nsecs - @start{}[tid]", line),
+                            format!("@duration_tmp[tid] += (nsecs - @start{}[tid])", line),
                             "$duration = @duration_tmp[tid]".to_string(),
                             "@count_tmp[tid] += 1".to_string(),
                             format!("delete(@start{}[tid])", line),
@@ -619,7 +620,7 @@ impl TraceStack {
                         ret_condition,
                         vec![
                             format!(
-                                "@duration_breakdown_tmp{i}[tid] += nsecs - @start_breakdown{i}[tid]",
+                                "@duration_breakdown_tmp{i}[tid] += (nsecs - @start_breakdown{i}[tid])",
                                 i = i
                             ),
                             format!("@count_breakdown_tmp{}[tid] += 1", i),

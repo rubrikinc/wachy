@@ -1,3 +1,4 @@
+use crate::constants::BPFTRACE_PATH;
 use crate::error::Error;
 use crate::events::Event;
 use crate::trace_structs::TraceStack;
@@ -21,7 +22,7 @@ enum TraceCommand {
 
 impl Tracer {
     pub fn run_prechecks() -> Result<(), Error> {
-        match Command::new("bpftrace").arg("--version").output() {
+        match Command::new(BPFTRACE_PATH).arg("--version").output() {
             Ok(output) => log::trace!("bpftrace version: {:?}", output),
             Err(err) => {
                 let msg = match err.kind() {
@@ -117,7 +118,7 @@ impl TraceCommandHandler {
         self.is_killing.store(false, Ordering::Release);
 
         let (expr, counter) = self.trace_stack.get_bpftrace_expr();
-        let mut program = Command::new("bpftrace")
+        let mut program = Command::new(BPFTRACE_PATH)
             .args(&["-e", &expr])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
