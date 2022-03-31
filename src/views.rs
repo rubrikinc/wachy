@@ -181,10 +181,10 @@ pub fn set_source_view(
         items.get_mut(line as usize - 1).unwrap().marked = true;
     }
     // Set this twice - once before to prevent out of bounds, second time to
-    // ensure the table scrolls to the right place.
+    // ensure the table actually scrolls to the right place.
     sview.set_selected_row(selected_line as usize - 1);
     sview.set_items(items);
-    // TODO is second time necessary?
+    sview.set_selected_row(selected_line as usize - 2);
     sview.set_selected_row(selected_line as usize - 1);
 }
 

@@ -13,8 +13,8 @@ backtrace = "0.3.63"
 clap = { version = "2.33.3", default-features = false }
 cplus_demangle = "0.1.1"
 crc32fast = "1.2.1"
-cursive = "0.16.3"
-cursive_table_view = "0.13.3"
+cursive = "0.17.0"
+cursive_table_view = "0.14.0"
 flexi_logger = { version = "0.20.0", default_features = false }
 fuzzy-matcher = "0.3.7"
 gimli = "0.26.1"
