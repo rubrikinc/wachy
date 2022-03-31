@@ -89,13 +89,8 @@ fn main() {
     std::panic::set_hook(Box::new(|info: &PanicInfo| {
         let mut msg = String::new();
         let _ = writeln!(msg, "Panic! [v{}]", VERSION);
-        if let Some(payload) = info.payload().downcast_ref::<&str>() {
-            let _ = writeln!(msg, "Cause: {}", payload);
-        }
-
-        if let Some(location) = info.location() {
-            let _ = writeln!(msg, "Location: {}.", location);
-        }
+        let display = info.to_string();
+        let _ = writeln!(msg, "Cause: {}", display);
 
         let _ = writeln!(msg);
         let _ = writeln!(msg, "{:#?}", backtrace::Backtrace::new());
