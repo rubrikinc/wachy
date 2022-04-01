@@ -740,15 +740,20 @@ impl Controller {
                         let controller = siv
                             .user_data::<Controller>()
                             .expect("Bug: Controller does not exist");
-                        // TODO don't expect
-                        let frame_info = Controller::setup_function(
+                        match Controller::setup_function(
                             &controller.program,
                             symbol.name,
                             &mut *sview,
                             &mut *fview,
-                        )
-                        .expect(&format!("Error setting up function {}", symbol.name));
-                        controller.trace_stack.push(frame_info);
+                        ) {
+                            Err(e) => siv.add_layer(views::new_dialog(&format!(
+                                "Error setting up function {}: {}",
+                                symbol.name, e
+                            ))),
+                            Ok(frame_info) => {
+                                controller.trace_stack.push(frame_info);
+                            }
+                        };
                     }
                 },
             );
@@ -766,12 +771,12 @@ impl Controller {
             siv,
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
-                let sview = siv
+                let line = siv
                     .find_name::<views::SourceView>("source_view")
-                    .expect("Bug: source_view does not exist");
-                let line = sview.row().unwrap() as u32 + 1;
-                // Allow `"source_view"` to be mutably found again below
-                std::mem::drop(sview);
+                    .expect("Bug: source_view does not exist")
+                    .row()
+                    .unwrap() as u32
+                    + 1;
                 let controller = siv
                     .user_data::<Controller>()
                     .expect("Bug: Controller does not exist");
@@ -794,10 +799,16 @@ impl Controller {
                         InstructionType::Manual => None,
                         InstructionType::Register(_, _) => None,
                         InstructionType::DynamicSymbol(function) => {
-                            Some(controller.program.get_symbol(function))
+                            controller.program.get_symbol(function).or_else(|| {
+                                log::warn!("Could not get symbol information for {}", function);
+                                None
+                            })
                         }
                         InstructionType::Function(function) => {
-                            Some(controller.program.get_symbol(function))
+                            controller.program.get_symbol(function).or_else(|| {
+                                log::warn!("Could not get symbol information for {}", function);
+                                None
+                            })
                         }
                     })
                     .map(|si| si.clone())
@@ -823,15 +834,20 @@ impl Controller {
                         let controller = siv
                             .user_data::<Controller>()
                             .expect("Bug: Controller does not exist");
-                        // TODO don't expect
-                        let frame_info = Controller::setup_function(
+                        match Controller::setup_function(
                             &controller.program,
                             symbol.name,
                             &mut *sview,
                             &mut *fview,
-                        )
-                        .expect(&format!("Error setting up function {}", symbol.name));
-                        controller.trace_stack.push(frame_info);
+                        ) {
+                            Err(e) => siv.add_layer(views::new_dialog(&format!(
+                                "Error setting up function {}: {}",
+                                symbol.name, e
+                            ))),
+                            Ok(frame_info) => {
+                                controller.trace_stack.push(frame_info);
+                            }
+                        };
                     }
                     // TODO show error for dyn fn
                 };

@@ -400,8 +400,8 @@ impl Program {
         ))
     }
 
-    pub fn get_symbol(&self, function: FunctionName) -> &SymbolInfo {
-        &self.name_to_symbol.get(&function).unwrap()
+    pub fn get_symbol(&self, function: FunctionName) -> Option<&SymbolInfo> {
+        self.name_to_symbol.get(&function)
     }
 
     pub fn symbols_generator(&self) -> SymbolsGenerator {
