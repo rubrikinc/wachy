@@ -113,7 +113,9 @@ impl Controller {
             "Select the top-level function to trace",
             vec![("Searching...".to_string(), None)],
             move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
-                let searcher = siv.user_data::<Searcher>().unwrap();
+                let searcher = siv
+                    .user_data::<Searcher>()
+                    .expect("Bug: Searcher does not exist");
                 searcher.search(view_name, search, n_results);
             },
             move |_, symbol: &SymbolInfo| {
@@ -144,7 +146,7 @@ impl Controller {
                         is_initial_result = false;
                         if !siv
                             .user_data::<Searcher>()
-                            .unwrap()
+                            .expect("Bug: Searcher does not exist")
                             .is_counter_current(counter)
                         {
                             continue;
@@ -201,7 +203,7 @@ impl Controller {
                 // updated.
                 if !siv
                     .user_data::<Controller>()
-                    .unwrap()
+                    .expect("Bug: Controller does not exist")
                     .trace_stack
                     .is_counter_current(data.counter)
                 {
@@ -231,7 +233,7 @@ impl Controller {
                     TraceInfoMode::Histogram(hist) => {
                         let function = &siv
                             .user_data::<Controller>()
-                            .unwrap()
+                            .expect("Bug: Controller does not exist")
                             .trace_stack
                             .get_current_function();
                         siv.call_on_name("histogram_view", |hview: &mut views::TextDialogView| {
@@ -250,7 +252,10 @@ impl Controller {
                         last_frame_trace,
                         breakdown_traces,
                     } => {
-                        let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                        let trace_stack = &siv
+                            .user_data::<Controller>()
+                            .expect("Bug: Controller does not exist")
+                            .trace_stack;
                         let last_function = trace_stack.get_current_function();
                         let format_latency = |t: &events::TraceCumulative| -> String {
                             if t.count != 0 {
@@ -295,7 +300,10 @@ impl Controller {
                 Ok(())
             }
             Event::TraceCommandModified => {
-                siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
+                siv.user_data::<Controller>()
+                    .expect("Bug: Controller does not exist")
+                    .tracer
+                    .rerun_tracer();
                 Ok(())
             }
             Event::SearchResults {
@@ -474,7 +482,10 @@ impl Controller {
     /// requested to correct the filter repeatedly until it passes or user
     /// cancels.
     fn setup_user_filter(siv: &mut Cursive, initial_filter: Option<String>, is_ret_filter: bool) {
-        let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+        let trace_stack = &siv
+            .user_data::<Controller>()
+            .expect("Bug: Controller does not exist")
+            .trace_stack;
         let function = trace_stack.get_current_function();
         let title = if is_ret_filter {
             format!(
@@ -495,7 +506,7 @@ impl Controller {
                 siv.pop_layer();
                 if let Err(message) = siv
                     .user_data::<Controller>()
-                    .unwrap()
+                    .expect("Bug: Controller does not exist")
                     .trace_stack
                     .set_current_filter(filter.to_string(), is_ret_filter)
                 {
@@ -514,7 +525,7 @@ impl Controller {
     fn add_callbacks(siv: &mut Cursive) {
         siv.add_global_callback(cursive::event::Event::CtrlChar('t'), |siv| {
             siv.user_data::<Controller>()
-                .unwrap()
+                .expect("Bug: Controller does not exist")
                 .key_handler
                 .advanced_mode_key_pressed();
         });
@@ -527,9 +538,14 @@ impl Controller {
                 // times, for all of the callbacks.
                 //
                 // Normal trace
-                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let mut sview = siv
+                    .find_name::<views::SourceView>("source_view")
+                    .expect("Bug: source_view does not exist");
                 let line = sview.row().unwrap() as u32 + 1;
-                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                let trace_stack = &siv
+                    .user_data::<Controller>()
+                    .expect("Bug: Controller does not exist")
+                    .trace_stack;
                 // We want to toggle tracing at this line - try to remove if it
                 // exists, otherwise proceed to add callsite.
                 if trace_stack.remove_callsite(line) {
@@ -556,15 +572,18 @@ impl Controller {
                         "Select the call to trace",
                         callsites,
                         move |siv: &mut Cursive, ci: &CallInstruction| {
-                            let mut sview =
-                                siv.find_name::<views::SourceView>("source_view").unwrap();
+                            let mut sview = siv
+                                .find_name::<views::SourceView>("source_view")
+                                .expect("Bug: source_view does not exist");
                             Self::set_line_state(
                                 &mut *sview,
                                 line,
                                 TraceState::Pending,
                                 TraceState::Pending,
                             );
-                            let controller = siv.user_data::<Controller>().unwrap();
+                            let controller = siv
+                                .user_data::<Controller>()
+                                .expect("Bug: Controller does not exist");
                             controller.trace_stack.add_callsite(line, ci.clone());
                         },
                     );
@@ -581,9 +600,14 @@ impl Controller {
             },
             |siv| {
                 // Advanced mode - allow specifying exact addresses to trace
-                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let mut sview = siv
+                    .find_name::<views::SourceView>("source_view")
+                    .expect("Bug: source_view does not exist");
                 let line = sview.row().unwrap() as u32 + 1;
-                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                let trace_stack = &siv
+                    .user_data::<Controller>()
+                    .expect("Bug: Controller does not exist")
+                    .trace_stack;
                 // We want to toggle tracing at this line - try to remove if it
                 // exists, otherwise proceed to add callsite.
                 if trace_stack.remove_callsite(line) {
@@ -614,14 +638,14 @@ impl Controller {
                                 let end_ip = unwrap::unwrap!(end_offset.parse::<u32>(), "Could not parse {} as number", end_offset);
                                 assert!(end_ip > start_ip);
                                 let ci = CallInstruction::manual(start_ip, end_ip - start_ip);
-                                let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                                let mut sview = siv.find_name::<views::SourceView>("source_view").expect("Bug: source_view does not exist");
                                 Self::set_line_state(
                                     &mut *sview,
                                     line,
                                     TraceState::Pending,
                                     TraceState::Pending,
                                 );
-                                let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                                let trace_stack = &siv.user_data::<Controller>().expect("Bug: Controller does not exist").trace_stack;
                                 trace_stack.add_callsite(line, ci);
                             },
                         ));
@@ -631,8 +655,13 @@ impl Controller {
         );
 
         KeyHandler::add_global_callback(siv, 'X', |siv| {
-            let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+            let mut sview = siv
+                .find_name::<views::SourceView>("source_view")
+                .expect("Bug: source_view does not exist");
+            let trace_stack = &siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist")
+                .trace_stack;
             let line = sview.row().unwrap() as u32 + 1;
             if trace_stack.remove_callsite(line) {
                 Self::set_line_state(
@@ -657,14 +686,18 @@ impl Controller {
                 "Select the call to trace",
                 callsites,
                 move |siv: &mut Cursive, ci: &CallInstruction| {
-                    let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                    let mut sview = siv
+                        .find_name::<views::SourceView>("source_view")
+                        .expect("Bug: source_view does not exist");
                     Self::set_line_state(
                         &mut *sview,
                         line,
                         TraceState::Pending,
                         TraceState::Pending,
                     );
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     controller.trace_stack.add_callsite(line, ci.clone());
                 },
             );
@@ -672,7 +705,9 @@ impl Controller {
         });
 
         KeyHandler::add_global_callback(siv, '>', |siv| {
-            let controller = siv.user_data::<Controller>().unwrap();
+            let controller = siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist");
             let initial_results = vec![("Type to search".to_string(), None)];
             controller
                 .searcher
@@ -681,20 +716,30 @@ impl Controller {
                 "Select the function to enter",
                 initial_results,
                 move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     controller.searcher.search(view_name, search, n_results);
                 },
                 move |siv: &mut Cursive, symbol: &SymbolInfo| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     // TODO cancel any pending searches
                     if controller.program.is_dynamic_symbol(symbol) {
                         // TODO show error for dyn fn
                     } else {
-                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
+                        let mut sview = siv
+                            .find_name::<views::SourceView>("source_view")
+                            .expect("Bug: source_view does not exist");
+                        let mut fview = siv
+                            .find_name::<views::FooterView>("footer_view")
+                            .expect("Bug: footer_view does not exist");
                         // Reset lifetime of `controller` to avoid overlapping
                         // mutable borrows of `siv`.
-                        let controller = siv.user_data::<Controller>().unwrap();
+                        let controller = siv
+                            .user_data::<Controller>()
+                            .expect("Bug: Controller does not exist");
                         // TODO don't expect
                         let frame_info = Controller::setup_function(
                             &controller.program,
@@ -711,18 +756,25 @@ impl Controller {
         });
 
         KeyHandler::add_global_callback(siv, 'r', |siv| {
-            siv.user_data::<Controller>().unwrap().tracer.rerun_tracer();
+            siv.user_data::<Controller>()
+                .expect("Bug: Controller does not exist")
+                .tracer
+                .rerun_tracer();
         });
 
         KeyHandler::add_global_callback(
             siv,
             cursive::event::Event::Key(cursive::event::Key::Enter),
             |siv| {
-                let sview = siv.find_name::<views::SourceView>("source_view").unwrap();
+                let sview = siv
+                    .find_name::<views::SourceView>("source_view")
+                    .expect("Bug: source_view does not exist");
                 let line = sview.row().unwrap() as u32 + 1;
                 // Allow `"source_view"` to be mutably found again below
                 std::mem::drop(sview);
-                let controller = siv.user_data::<Controller>().unwrap();
+                let controller = siv
+                    .user_data::<Controller>()
+                    .expect("Bug: Controller does not exist");
                 let trace_stack = &controller.trace_stack;
                 let callsites = trace_stack.get_callsites(line);
                 if callsites.is_empty() {
@@ -753,16 +805,24 @@ impl Controller {
                 let num_indirect_calls = num_callsites - direct_calls.len();
 
                 let submit_fn = move |siv: &mut Cursive, symbol: &SymbolInfo| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     // TODO cancel any pending searches
                     if controller.program.is_dynamic_symbol(symbol) {
                         // TODO show error for dyn fn
                     } else {
-                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
+                        let mut sview = siv
+                            .find_name::<views::SourceView>("source_view")
+                            .expect("Bug: source_view does not exist");
+                        let mut fview = siv
+                            .find_name::<views::FooterView>("footer_view")
+                            .expect("Bug: footer_view does not exist");
                         // Reset lifetime of `controller` to avoid overlapping
                         // mutable borrows of `siv`.
-                        let controller = siv.user_data::<Controller>().unwrap();
+                        let controller = siv
+                            .user_data::<Controller>()
+                            .expect("Bug: Controller does not exist");
                         // TODO don't expect
                         let frame_info = Controller::setup_function(
                             &controller.program,
@@ -800,7 +860,9 @@ impl Controller {
                                   view_name: &str,
                                   search: &str,
                                   n_results: usize| {
-                                let controller = siv.user_data::<Controller>().unwrap();
+                                let controller = siv
+                                    .user_data::<Controller>()
+                                    .expect("Bug: Controller does not exist");
                                 controller.searcher.search(view_name, search, n_results);
                             },
                             submit_fn,
@@ -829,18 +891,24 @@ impl Controller {
                         || views::is_text_dialog_view(&view, "breakdown_view")
                     {
                         siv.user_data::<Controller>()
-                            .unwrap()
+                            .expect("Bug: Controller does not exist")
                             .trace_stack
                             .set_mode(TraceMode::Line);
                     }
 
                     return;
                 }
-                let controller = siv.user_data::<Controller>().unwrap();
+                let controller = siv
+                    .user_data::<Controller>()
+                    .expect("Bug: Controller does not exist");
                 match controller.trace_stack.pop() {
                     Some(frame_info) => {
-                        let mut sview = siv.find_name::<views::SourceView>("source_view").unwrap();
-                        let mut fview = siv.find_name::<views::FooterView>("footer_view").unwrap();
+                        let mut sview = siv
+                            .find_name::<views::SourceView>("source_view")
+                            .expect("Bug: source_view does not exist");
+                        let mut fview = siv
+                            .find_name::<views::FooterView>("footer_view")
+                            .expect("Bug: footer_view does not exist");
                         Controller::setup_source_view(&frame_info, &mut *sview, &mut *fview)
                             .unwrap();
                     }
@@ -855,14 +923,20 @@ impl Controller {
                 return;
             }
 
-            let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+            let trace_stack = &siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist")
+                .trace_stack;
             trace_stack.set_mode(TraceMode::Histogram);
             let function = trace_stack.get_current_function();
             siv.add_layer(views::new_text_dialog_view(
                 &format!("Gathering latency histogram for {}...", function),
                 "histogram_view",
                 |siv| {
-                    let trace_stack = &siv.user_data::<Controller>().unwrap().trace_stack;
+                    let trace_stack = &siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist")
+                        .trace_stack;
                     trace_stack.set_mode(TraceMode::Line);
                     siv.pop_layer();
                 },
@@ -877,7 +951,7 @@ impl Controller {
 
             let initial_filter = siv
                 .user_data::<Controller>()
-                .unwrap()
+                .expect("Bug: Controller does not exist")
                 .trace_stack
                 .get_current_filter(false);
             Controller::setup_user_filter(siv, initial_filter, false);
@@ -890,14 +964,16 @@ impl Controller {
 
             let initial_filter = siv
                 .user_data::<Controller>()
-                .unwrap()
+                .expect("Bug: Controller does not exist")
                 .trace_stack
                 .get_current_filter(true);
             Controller::setup_user_filter(siv, initial_filter, true);
         });
 
         KeyHandler::add_global_callback(siv, 'b', |siv| {
-            let controller = siv.user_data::<Controller>().unwrap();
+            let controller = siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist");
             let initial_results = vec![("Type to search".to_string(), None)];
             controller
                 .searcher
@@ -906,11 +982,15 @@ impl Controller {
                 "Select the functions to trace",
                 initial_results,
                 move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     controller.searcher.search(view_name, search, n_results);
                 },
                 move |siv: &mut Cursive, symbol: &SymbolInfo| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     // TODO cancel any pending searches
                     if controller.program.is_dynamic_symbol(symbol) {
                         // TODO show error for dyn fn
@@ -923,8 +1003,10 @@ impl Controller {
                                 &format!("Gathering latency breakdown for {}...", current_function),
                                 "breakdown_view",
                                 |siv| {
-                                    let trace_stack =
-                                        &siv.user_data::<Controller>().unwrap().trace_stack;
+                                    let trace_stack = &siv
+                                        .user_data::<Controller>()
+                                        .expect("Bug: Controller does not exist")
+                                        .trace_stack;
                                     trace_stack.set_mode(TraceMode::Line);
                                     siv.pop_layer();
                                 },
@@ -939,7 +1021,9 @@ impl Controller {
         });
 
         KeyHandler::add_global_callback(siv, 'm', |siv| {
-            let controller = siv.user_data::<Controller>().unwrap();
+            let controller = siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist");
             let initial_results = vec![("Type to search".to_string(), None)];
             controller
                 .searcher
@@ -948,7 +1032,9 @@ impl Controller {
                 "Select a function to get its mangled name",
                 initial_results,
                 move |siv: &mut Cursive, view_name: &str, search: &str, n_results: usize| {
-                    let controller = siv.user_data::<Controller>().unwrap();
+                    let controller = siv
+                        .user_data::<Controller>()
+                        .expect("Bug: Controller does not exist");
                     controller.searcher.search(view_name, search, n_results);
                 },
                 move |siv: &mut Cursive, symbol: &SymbolInfo| {
@@ -995,7 +1081,10 @@ impl KeyHandler {
         F2: FnMut(&mut Cursive) + 'static,
     {
         siv.add_global_callback(event, move |siv| {
-            let key_handler = &siv.user_data::<Controller>().unwrap().key_handler;
+            let key_handler = &siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist")
+                .key_handler;
             if key_handler.advanced_mode_enable_time.map_or(false, |i| {
                 Instant::now().duration_since(i).as_millis() < KeyHandler::ADVANCED_MODE_DURATION_MS
             }) {
@@ -1013,7 +1102,10 @@ impl KeyHandler {
         F1: FnMut(&mut Cursive) + 'static,
     {
         siv.add_global_callback(event, move |siv| {
-            let key_handler = &mut siv.user_data::<Controller>().unwrap().key_handler;
+            let key_handler = &mut siv
+                .user_data::<Controller>()
+                .expect("Bug: Controller does not exist")
+                .key_handler;
             key_handler.advanced_mode_enable_time = None;
             normal_cb(siv);
         });

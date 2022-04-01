@@ -458,7 +458,8 @@ impl Iterator for CallIterator<'_, '_> {
         while let Some((instruction, ip)) = self.it.next() {
             if instruction.mnemonic == self.mnemonic {
                 if log::log_enabled!(log::Level::Trace) {
-                    let formatter = Formatter::new(FormatterStyle::INTEL).unwrap();
+                    let formatter = Formatter::new(FormatterStyle::INTEL)
+                        .expect("Could not create zydis Formatter");
                     let mut buffer = [0u8; 200];
                     let mut buffer = OutputBuffer::new(&mut buffer[..]);
                     formatter
