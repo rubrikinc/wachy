@@ -168,7 +168,7 @@ impl Controller {
                         return Ok(Some(function));
                     }
                     _ => {
-                        panic!("Unexpected event")
+                        panic!("Bug: Unexpected event")
                     }
                 },
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -192,7 +192,7 @@ impl Controller {
     }
 
     fn handle_event(siv: &mut CursiveRunner<CursiveRunnable>, event: Event) -> Result<(), Error> {
-        match event {
+        let result = match event {
             Event::FatalTraceError { error_message } => {
                 siv.quit();
                 Err(error_message.into())
@@ -296,7 +296,6 @@ impl Controller {
                         });
                     }
                 }
-                siv.refresh();
                 Ok(())
             }
             Event::TraceCommandModified => {
@@ -325,7 +324,13 @@ impl Controller {
             Event::SelectedFunction(_) => {
                 panic!("Unexpected event");
             }
+        };
+        if result.is_ok() {
+            // We may not _need_ to refresh in all cases, but doing this on in
+            // one place makes things easier with minimal drawbacks.
+            siv.refresh();
         }
+        result
     }
 
     fn setup_function(
