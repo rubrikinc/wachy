@@ -94,9 +94,9 @@ dependencies = [
 
 [[package]]
 name = "cplus_demangle"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a8535e806ca9c0be6e22afbeac9872995e2742586f7a256c195288f3f20bde6"
+checksum = "7d44c8c2c3ec9d28bca14fd424c88f6ed13d934804c8bfe12431f014524bfd11"
 dependencies = [
  "cc",
  "libc",
