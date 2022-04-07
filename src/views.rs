@@ -215,6 +215,7 @@ pub type SearchView = ResizedView<Dialog>;
 
 const SEARCH_VIEW_WIDTH: usize = 70;
 const SEARCH_VIEW_HEIGHT: usize = 8;
+const SEARCH_VIEW_MAX_RESULTS: usize = 50;
 
 /// `title` must be unique (it is used in the name of the view). Parameters of
 /// `edit_search_fn` are search view name, search string, and (max) number of
@@ -250,14 +251,13 @@ where
                 }
             })
             .with_name(&name)
-            .min_width(SEARCH_VIEW_WIDTH - 2), // ScrollView adds 2 character border
+            .full_width(), // ScrollView adds 2 characters for scrollbar
     )
     .scroll_x(true)
-    .fixed_size((SEARCH_VIEW_WIDTH, 8));
+    .fixed_size((SEARCH_VIEW_WIDTH, SEARCH_VIEW_HEIGHT));
 
     let update_edit_view = move |siv: &mut Cursive, search: &str, _| {
-        // TODO we should add more results and allow scrolling?
-        edit_search_fn(siv, &name, search, SEARCH_VIEW_HEIGHT);
+        edit_search_fn(siv, &name, search, SEARCH_VIEW_MAX_RESULTS);
     };
     let edit_view = EditView::new()
         .filler(" ")
@@ -276,7 +276,7 @@ where
 
     Dialog::around(LinearLayout::vertical().child(edit_view).child(select_view))
         .title(title)
-        .fixed_width(SEARCH_VIEW_WIDTH)
+        .fixed_width(SEARCH_VIEW_WIDTH + 4) // Dialog adds 2 character border on each side
 }
 
 /// Update search view, return true if it was found (and updated)
