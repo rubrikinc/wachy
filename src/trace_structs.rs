@@ -3,11 +3,11 @@ use itertools::Itertools;
 use crate::bpftrace_compiler::BlockType::{Uprobe, UprobeOffset, Uretprobe};
 use crate::bpftrace_compiler::Expression::Printf;
 use crate::bpftrace_compiler::{self, Block, BlockType, Expression};
-use crate::constants::BPFTRACE_PATH;
 use crate::error::Error;
 use crate::events::{Event, TraceCumulative, TraceInfo, TraceInfoMode};
 use crate::program::FunctionName;
 use std::collections::HashMap;
+use std::process::Command;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -355,7 +355,7 @@ impl TraceStack {
         let prev_filter = frame_filter.clone();
         *frame_filter = Some(filter);
         // Run bpftrace in dry run mode to ensure filter compiles
-        let output = std::process::Command::new(BPFTRACE_PATH)
+        let output = bpftrace_cmd()
             .args(&["-d", "-e", &self.get_bpftrace_expr_locked(&guard).0])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -850,4 +850,8 @@ impl TraceStack {
     pub fn is_counter_current(&self, counter: u64) -> bool {
         counter == self.counter.load(Ordering::Acquire)
     }
+}
+
+pub fn bpftrace_cmd() -> Command {
+    Command::new("bpftrace")
 }
