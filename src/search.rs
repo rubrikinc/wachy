@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::events::Event;
 use crate::program::{SymbolInfo, SymbolsGenerator};
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -173,7 +174,18 @@ where
     I: Iterator<Item = &'a T>,
     F: Fn() -> bool,
 {
-    let matcher = SkimMatcherV2::default();
+    // `element_limit` limits max matrix size (which is proportional to choice
+    // param's length for `fuzzy_match`) for which the fuzzy search algorithm is
+    // run. Above this size, a simpler algorithm will be run. The fuzzy
+    // algorithm gets very slow with long strings. With complex template types
+    // (which are rarely relevant with wachy in practice) this can cause
+    // unnecessary slowdown. Functions with long param list may get worse
+    // ranking from this though.
+    let element_limit = std::env::var("WACHY_FUZZY_LIMIT")
+        .map_err(|_| Error::from("var error"))
+        .and_then(|l| l.parse::<usize>().map_err(|_| Error::from("parse error")))
+        .unwrap_or(300);
+    let matcher = SkimMatcherV2::default().element_limit(element_limit);
     let mut candidates = Vec::new();
     for (i, val) in it.enumerate() {
         if i % 32 == 0 && is_cancelled_fn() {
@@ -221,7 +233,8 @@ mod tests {
     use super::*;
     #[test]
     #[ignore]
-    /// Very crude benchmark for the ranking function
+    /// Very crude benchmark for the ranking function. Test with
+    /// `cargo test --release bench -- --nocapture`.
     fn bench_rank_fn() {
         let program = crate::program::Program::new("program".to_string()).unwrap();
         println!("Loaded");
