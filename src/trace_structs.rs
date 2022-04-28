@@ -413,7 +413,7 @@ impl TraceStack {
             })
             .sum();
 
-        let mut program = bpftrace_compiler::Program::new();
+        let mut program = bpftrace_compiler::BpftraceProgram::new();
         program.add(Block::new(
             BlockType::Begin,
             None,

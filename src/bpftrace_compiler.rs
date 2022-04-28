@@ -4,7 +4,7 @@ use crate::program::FunctionName;
 
 /// A simple AST representation of a bpftrace program which makes it a bit
 /// easier to generate. Compiles to bpftrace syntax, i.e. String.
-pub struct Program {
+pub struct BpftraceProgram {
     blocks: Vec<Block>,
 }
 
@@ -41,9 +41,9 @@ pub enum Expression {
     Print(String),
 }
 
-impl Program {
-    pub fn new() -> Program {
-        Program { blocks: Vec::new() }
+impl BpftraceProgram {
+    pub fn new() -> BpftraceProgram {
+        BpftraceProgram { blocks: Vec::new() }
     }
 
     pub fn add(&mut self, block: Block) {
