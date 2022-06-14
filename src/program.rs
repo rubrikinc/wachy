@@ -109,7 +109,43 @@ impl Program {
             .collect();
 
         let mut versioned_symbols_map: HashMap<String, FunctionName> = HashMap::new();
-        let symbols: Vec<SymbolInfo> = file
+
+        // Try to find file containing `.debug_line` section - if it's not in
+        // the passed in binary, check debuglink.
+        let debug_file;
+        let debug_file_ref = match file.section_by_name(".debug_line") {
+            Some(_) => &file,
+            None => match Program::get_debug_file(&file, &file_path) {
+                None => {
+                    return Err(Error::from(format!(
+                        "Program {} is missing debug symbols (section .debug_line not found)",
+                        file_path
+                    )))
+                }
+                Some(r) => match r {
+                    Ok(df) => {
+                        debug_file = df;
+                        &debug_file
+                    }
+                    Err(err) => {
+                        return Err(Error::from(format!(
+                            "Failed to get debug file for program {}: {}",
+                            file_path, err
+                        )))
+                    }
+                },
+            },
+        };
+
+        let symbols_file = if file.has_debug_symbols() {
+            &file
+        } else {
+            log::info!("binary does not have debug symbols, using debug info file");
+            debug_file_ref
+        };
+
+        // if binary contains symbols, use those - if not, get them from the debuginfo file
+        let symbols: Vec<SymbolInfo> = symbols_file
             .symbols()
             .filter(|symbol| symbol.kind() == object::SymbolKind::Text) // Filter to functions
             .map(|symbol| {
@@ -147,32 +183,6 @@ impl Program {
             .map(|(n, s)| (s.address, n.clone()))
             .collect();
 
-        // Try to find file containing `.debug_line` section - if it's not in
-        // the passed in binary, check debuglink.
-        let debug_file;
-        let debug_file_ref = match file.section_by_name(".debug_line") {
-            Some(_) => &file,
-            None => match Program::get_debug_file(&file, &file_path) {
-                None => {
-                    return Err(Error::from(format!(
-                        "Program {} is missing debug symbols (section .debug_line not found)",
-                        file_path
-                    )))
-                }
-                Some(r) => match r {
-                    Ok(df) => {
-                        debug_file = df;
-                        &debug_file
-                    }
-                    Err(err) => {
-                        return Err(Error::from(format!(
-                            "Failed to get debug file for program {}: {}",
-                            file_path, err
-                        )))
-                    }
-                },
-            },
-        };
         let context = new_context(debug_file_ref).unwrap();
 
         Ok(Program {
