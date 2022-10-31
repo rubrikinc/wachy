@@ -47,7 +47,7 @@ Problem statement: most perf debugging tools
 
 <div class="center">
 
-[![Demo video](images/video.png)](https://www.youtube.com/watch?v=L6VyQP-YDgE "Demo video")
+[![Demo video](images/video.png)](https://www.youtube.com/watch?v=8Pwy-J4e4sQ "Demo video")
 
 For more details on usage see the [guide](docs/guide.md).
 
